@@ -100,7 +100,8 @@ input[type=text], input[type=number], input[type=date] {
 .itemrow:last-child { border-bottom: none; }
 .irow-top { display: flex; align-items: flex-start; gap: 8px; }
 .irow-mid { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
-.gramsIn { width: 70px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font-size: .85rem; }
+.gramsIn { width: 52px; padding: 6px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font-size: .85rem; }
+.irow-mid .s { white-space: nowrap; }
 .wholefrac { margin: 10px 0; padding-top: 8px; border-top: 1px dashed var(--line); }
 .dfoot { position: sticky; bottom: 0; background: var(--card); padding-top: 8px; }
 .dtot { font-size: .95rem; text-align: center; }
@@ -282,9 +283,12 @@ function mealTitle(m) {
 function mealCalories(m) {
   return (m.items || []).reduce((s, i) => s + Math.round(i.calories * i.fraction_pct / 100), 0);
 }
+function mealProtein(m) {
+  return (m.items || []).reduce((s, i) => s + Math.round(i.protein_mg * i.fraction_pct / 100 / 1000), 0);
+}
 function mealRow(m) {
   const thumb = m.photo_url ? `<img class="thumb" src="${esc(m.photo_url)}">` : '';
-  return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}</div><div class="s">${mealCalories(m)} kcal</div></div></div>`;
+  return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}</div><div class="s">${mealCalories(m)} cal · ${mealProtein(m)} g protein</div></div></div>`;
 }
 function renderToday(m) {
   const s = S.summary;
@@ -494,7 +498,7 @@ function draftItemRow(it, idx) {
     </div>
     <div class="irow-mid">
       <input type="number" class="gramsIn" value="${it.grams || ''}" placeholder="g" onchange="setDraftGrams(${idx},this.value)">
-      <span class="s">${eatenCal} kcal · ${eatenP} g protein</span>
+      <span class="s">${eatenCal} cal · ${eatenP} g protein</span>
     </div>
     ${fracChips(it, idx)}
   </div>`;
@@ -531,7 +535,7 @@ function draftDialogHTML() {
     </div>
     ${DRAFT.mode === 'edit' ? `<label class="f">Day</label><input type="date" value="${DRAFT.day}" max="${today()}" onchange="DRAFT.day=this.value">` : ''}
     <div class="dfoot">
-      <div class="dtot"><b>${totals.cal}</b> kcal · ${totals.protein} g protein</div>
+      <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein} g protein</div>
       <div class="dlg-actions">
         ${DRAFT.mode === 'edit' ? `<button class="btn danger" onclick="deleteMealConfirm(${DRAFT.id})">Delete</button>` : ''}
         <button class="btn ghost" onclick="closeDialog()">Cancel</button>
@@ -649,7 +653,7 @@ function renderTrends(m) {
     <div class="card">
       <h3>Calories</h3>
       <div class="avgrow">
-        <div><div class="big">${avgCal ?? '–'}</div><div class="s muted">avg kcal</div></div>
+        <div><div class="big">${avgCal ?? '–'}</div><div class="s muted">avg cal</div></div>
         <div><div class="big">${avgP ?? '–'}</div><div class="s muted">avg protein g</div></div>
         <div><div class="big">${avgScore ?? '–'}</div><div class="s muted">avg score</div></div>
       </div>

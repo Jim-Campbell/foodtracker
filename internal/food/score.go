@@ -67,7 +67,7 @@ func ValidateItem(it MealItem) (errs []string, warnings []string) {
 		upper := it.Calories * 13 / 10
 		if atwaterKcal < lower || atwaterKcal > upper {
 			warnings = append(warnings, fmt.Sprintf(
-				"calories (%d) don't match macros (Atwater estimate ~%d kcal) for %q",
+				"calories (%d) don't match macros (Atwater estimate ~%d cal) for %q",
 				it.Calories, atwaterKcal, it.Name))
 		}
 	}
