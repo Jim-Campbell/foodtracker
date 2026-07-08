@@ -353,7 +353,8 @@ function buildLogBar() {
     ${micBtn}${camBtn}
     <button class="iconbtn" onclick="weightDialog()" title="Log weight">⚖️</button>
     <button class="iconbtn primary" onclick="submitText()" title="Log">➤</button>
-    <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none" onchange="onPhotoSelected(this.files[0]); this.value=''">
+    <!-- no capture attribute: iOS then offers its native Photo Library / Take Photo sheet -->
+    <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="onPhotoSelected(this.files[0]); this.value=''">
   `;
 }
 
