@@ -26,13 +26,16 @@ func NewOFFClient() *OFFClient {
 }
 
 // Product is one Open Food Facts lookup result. PerServing is nil when the
-// product has no serving-size nutriments.
+// product has no serving-size nutriments. RawNutriments is OFF's full
+// nutriments object, kept for meal_items.micros but excluded from JSON so it
+// never lands in an AI tool result (it can run to ~100 keys).
 type Product struct {
-	Name        string           `json:"name"`
-	Brands      string           `json:"brands,omitempty"`
-	ServingSize string           `json:"serving_size,omitempty"`
-	Per100g     PerHundredGrams  `json:"per_100g"`
-	PerServing  *PerHundredGrams `json:"per_serving,omitempty"`
+	Name          string           `json:"name"`
+	Brands        string           `json:"brands,omitempty"`
+	ServingSize   string           `json:"serving_size,omitempty"`
+	Per100g       PerHundredGrams  `json:"per_100g"`
+	PerServing    *PerHundredGrams `json:"per_serving,omitempty"`
+	RawNutriments json.RawMessage  `json:"-"`
 }
 
 type offResponse struct {
@@ -40,11 +43,13 @@ type offResponse struct {
 	Product offProduct `json:"product"`
 }
 
+// offProduct keeps Nutriments raw so the full payload can be preserved for
+// micros; the typed subset is decoded from it separately.
 type offProduct struct {
-	ProductName string        `json:"product_name"`
-	Brands      string        `json:"brands"`
-	ServingSize string        `json:"serving_size"`
-	Nutriments  offNutriments `json:"nutriments"`
+	ProductName string          `json:"product_name"`
+	Brands      string          `json:"brands"`
+	ServingSize string          `json:"serving_size"`
+	Nutriments  json.RawMessage `json:"nutriments"`
 }
 
 // offNutriments maps the subset of Open Food Facts' nutriments object this
@@ -102,11 +107,17 @@ func (c *OFFClient) Lookup(ctx context.Context, barcode string) (*Product, error
 		return nil, fmt.Errorf("barcode %s not found in Open Food Facts", barcode)
 	}
 
-	n := parsed.Product.Nutriments
+	var n offNutriments
+	if len(parsed.Product.Nutriments) > 0 {
+		if err := json.Unmarshal(parsed.Product.Nutriments, &n); err != nil {
+			return nil, fmt.Errorf("unmarshal off nutriments: %w", err)
+		}
+	}
 	product := &Product{
-		Name:        parsed.Product.ProductName,
-		Brands:      parsed.Product.Brands,
-		ServingSize: parsed.Product.ServingSize,
+		Name:          parsed.Product.ProductName,
+		Brands:        parsed.Product.Brands,
+		ServingSize:   parsed.Product.ServingSize,
+		RawNutriments: parsed.Product.Nutriments,
 		Per100g: PerHundredGrams{
 			Calories:  roundInt(deref(n.EnergyKcal100g)),
 			ProteinMg: gramsToMg(deref(n.Proteins100g)),

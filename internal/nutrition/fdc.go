@@ -107,10 +107,14 @@ type fdcFoodNutrient struct {
 
 // Search looks up foods by free-text query, preferring Foundation and SR
 // Legacy data over Branded (matched by USDA's own relevance ranking, not
-// re-sorted here). pageSize <= 0 defaults to 5.
+// re-sorted here). pageSize <= 0 defaults to 3, capped at 10 -- these results
+// are fed to the AI parser as tokens, so small pages keep parses fast.
 func (c *FDCClient) Search(ctx context.Context, query string, pageSize int) ([]FDCFood, error) {
 	if pageSize <= 0 {
-		pageSize = 5
+		pageSize = 3
+	}
+	if pageSize > 10 {
+		pageSize = 10
 	}
 	reqBody, err := json.Marshal(fdcSearchRequest{
 		Query:    query,

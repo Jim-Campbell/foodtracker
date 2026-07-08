@@ -157,6 +157,61 @@ func TestParserToolLoopMechanics(t *testing.T) {
 	}
 }
 
+// TestParserMicrosAttachedServerSide: the model gets slim usda_search results
+// (no per-nutrient list -- that's the token bloat that made parses slow) while
+// finish() still attaches the full cached nutrient payload as micros on items
+// whose source/source_ref match a lookup from this parse.
+func TestParserMicrosAttachedServerSide(t *testing.T) {
+	ref := "173735"
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolUSDASearch, map[string]any{"query": "egg"})},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) { it.SourceRef = &ref })},
+			})},
+		},
+	}}
+	usda := &fakeUSDA{results: []nutrition.FDCFood{{
+		FDCID: 173735, Description: "Egg, whole, raw",
+		Nutrients: []nutrition.NutrientAmount{
+			{Name: "Vitamin B-12", Value: 0.89, Unit: "UG"},
+			{Name: "Choline, total", Value: 293.8, Unit: "MG"},
+		},
+	}}}
+
+	p := NewParser(messenger, usda, &fakeOFF{}, slog.Default())
+	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07")
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+
+	// The round-2 request carries the tool_result; it must not include the
+	// nutrient list the model has no use for.
+	secondCallMsgs := messenger.calls[1].Messages
+	last := secondCallMsgs[len(secondCallMsgs)-1]
+	var tr struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(last.Content[0], &tr); err != nil {
+		t.Fatalf("decode tool_result: %v", err)
+	}
+	if strings.Contains(tr.Content, "Vitamin B-12") {
+		t.Errorf("tool_result sent to the model still contains the full nutrient list: %s", tr.Content)
+	}
+	if !strings.Contains(tr.Content, "Egg, whole, raw") {
+		t.Errorf("tool_result lost the food description: %s", tr.Content)
+	}
+
+	// ...while the returned item carries the full payload as micros.
+	if !strings.Contains(string(result.Items[0].Micros), "Vitamin B-12") {
+		t.Errorf("Micros = %s, want the cached full nutrient payload attached server-side", result.Items[0].Micros)
+	}
+}
+
 // TestParserPreservesUnmodeledBlocks guards against the real bug this
 // exposed live: Claude returned a "thinking" block this app has no typed
 // field for. Round-tripping it through a lossy struct dropped the

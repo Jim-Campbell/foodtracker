@@ -26,10 +26,12 @@ body {
   background: var(--bg); color: var(--text);
 }
 header {
-  position: sticky; top: 0; z-index: 6; background: var(--primary); color: #fff;
-  padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
-  text-align: center; font-weight: 700; font-size: 1.05rem;
+  position: sticky; top: 0; z-index: 6; color: #fff;
+  background: linear-gradient(150deg, #d05f30, #a8431f);
+  padding: calc(9px + env(safe-area-inset-top)) 16px 9px;
+  display: flex; align-items: center; justify-content: center;
 }
+header svg { height: 26px; width: auto; display: block; }
 main { max-width: 480px; margin: 0 auto; padding: 14px 14px 190px; min-width: 0; }
 .card { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 16px; margin-bottom: 12px; }
 h2 { font-size: 1.05rem; margin-bottom: 10px; }
@@ -72,7 +74,9 @@ input[type=text], input[type=number], input[type=date] {
 .row .s { font-size: .78rem; color: var(--muted); }
 .thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
 .lk { background: none; border: none; color: var(--red); cursor: pointer; font-size: 1rem; padding: 4px; }
-.hint { background: var(--chip); border-radius: 10px; padding: 8px 12px; font-size: .82rem; margin-bottom: 10px; }
+.hint { background: var(--chip); border-radius: 10px; padding: 8px 12px; font-size: .82rem; margin-bottom: 10px; color: var(--muted); display: flex; align-items: flex-start; gap: 6px; cursor: pointer; }
+.hint .hint-txt { flex: 1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hint.open .hint-txt { -webkit-line-clamp: unset; }
 /* day nav */
 .daynav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 12px; }
 .daynav h2 { margin: 0; min-width: 130px; text-align: center; }
@@ -133,7 +137,18 @@ dialog.wide { width: min(520px, calc(100vw - 24px)); }
 </style>
 </head>
 <body>
-<header>Food</header>
+<header aria-label="Food">
+  <svg viewBox="0 0 76 28" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true">
+    <!-- fork -->
+    <path d="M5.5 4v5a3.5 3.5 0 0 0 7 0V4"/>
+    <path d="M9 4v8.5M9 13.5V24"/>
+    <!-- plate -->
+    <circle cx="38" cy="14" r="10"/>
+    <circle cx="38" cy="14" r="4.6" stroke-opacity=".65" stroke-width="1.8"/>
+    <!-- knife -->
+    <path d="M67 4c-3.1 3.3-3.1 8.2 0 11.4V24"/>
+  </svg>
+</header>
 <main id="main"></main>
 <div id="bottomBar">
   <div id="logbar"></div>
@@ -503,7 +518,7 @@ function draftDialogHTML() {
   const totals = itemTotals(DRAFT.items);
   const title = DRAFT.mode === 'edit' ? 'Edit meal' : 'Confirm meal';
   return `<h2>${title}</h2>
-    ${DRAFT.notes && DRAFT.notesShown ? `<div class="hint">💡 ${esc(DRAFT.notes)} <button class="lk" style="color:var(--muted)" onclick="DRAFT.notesShown=false;renderDraftDialog()">✕</button></div>` : ''}
+    ${DRAFT.notes && DRAFT.notesShown ? `<div class="hint ${DRAFT.notesOpen ? 'open' : ''}" onclick="DRAFT.notesOpen=!DRAFT.notesOpen;renderDraftDialog()"><span class="hint-txt">💡 ${esc(DRAFT.notes)}</span><button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();DRAFT.notesShown=false;renderDraftDialog()">✕</button></div>` : ''}
     <div class="itemlist">${DRAFT.items.map((it, idx) => draftItemRow(it, idx)).join('') || '<div class="empty">No items</div>'}</div>
     <div class="wholefrac">
       <span class="muted sm">Whole meal:</span>

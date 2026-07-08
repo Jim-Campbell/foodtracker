@@ -5,12 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/jimgcampbell/food/docs"
 	"github.com/jimgcampbell/food/internal/food"
 	"github.com/jimgcampbell/food/internal/nutrition"
 )
+
+// microsCache accumulates full nutrient payloads from tool executions during
+// one parse, keyed "<source>:<source_ref>" (e.g. "usda:173735", "off:001600...").
+// The model only ever sees slim tool results; finish() attaches these to the
+// matching items server-side, so meal_items.micros stays complete without the
+// model reading or regenerating thousands of nutrient tokens.
+type microsCache map[string]json.RawMessage
 
 // maxToolRounds caps the agentic tool-use loop before record_meal is forced.
 const maxToolRounds = 8
@@ -59,6 +67,7 @@ func (p *Parser) ParseImage(ctx context.Context, imageData []byte, mediaType, hi
 func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.ParseResult, error) {
 	system := p.systemPrompt(day)
 	messages := []Message{first}
+	cache := microsCache{}
 
 	for round := 0; round < maxToolRounds; round++ {
 		resp, err := p.client.CreateMessage(ctx, Request{System: system, Messages: messages, Tools: tools()})
@@ -68,10 +77,10 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.Pa
 		messages = append(messages, Message{Role: RoleAssistant, Content: resp.Content})
 
 		if in, ok := extractRecordMeal(resp.Content); ok {
-			return p.finish(in, resp.Model, messages)
+			return p.finish(in, resp.Model, messages, cache)
 		}
 
-		toolResults, calledAny := p.executeTools(ctx, resp.Content)
+		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache)
 		if !calledAny {
 			messages = append(messages, UserMessage(TextBlock(
 				"Continue. When you have enough information, call record_meal to finish.")))
@@ -97,7 +106,7 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.Pa
 	if !ok {
 		return nil, fmt.Errorf("ai did not return a meal record")
 	}
-	return p.finish(in, resp.Model, messages)
+	return p.finish(in, resp.Model, messages, cache)
 }
 
 type recordMealInput struct {
@@ -122,29 +131,29 @@ func extractRecordMeal(content []json.RawMessage) (*recordMealInput, bool) {
 // executeTools runs every tool_use block in content and returns the matching
 // tool_result blocks, in order. calledAny is false when content had no tool
 // calls at all (the model just talked).
-func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage) (results []json.RawMessage, calledAny bool) {
+func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage, cache microsCache) (results []json.RawMessage, calledAny bool) {
 	for _, b := range decodeBlocks(content) {
 		if b.Type != "tool_use" {
 			continue
 		}
 		calledAny = true
-		results = append(results, p.executeTool(ctx, b))
+		results = append(results, p.executeTool(ctx, b, cache))
 	}
 	return results, calledAny
 }
 
-func (p *Parser) executeTool(ctx context.Context, block blockMeta) json.RawMessage {
+func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsCache) json.RawMessage {
 	switch block.Name {
 	case toolUSDASearch:
-		return p.execUSDASearch(ctx, block)
+		return p.execUSDASearch(ctx, block, cache)
 	case toolOFFBarcode:
-		return p.execOFFBarcode(ctx, block)
+		return p.execOFFBarcode(ctx, block, cache)
 	default:
 		return ToolResultBlock(block.ID, fmt.Sprintf("unknown tool %q", block.Name), true)
 	}
 }
 
-func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta) json.RawMessage {
+func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache microsCache) json.RawMessage {
 	var in struct {
 		Query    string `json:"query"`
 		PageSize int    `json:"page_size"`
@@ -161,14 +170,31 @@ func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta) json.RawMe
 	if len(results) == 0 {
 		return ToolResultBlock(block.ID, "no USDA results found -- estimate this item instead.", false)
 	}
-	body, err := json.Marshal(results)
+
+	// Cache each result's full nutrient list for micros, then strip it from
+	// what the model sees: an FDC food can carry 100+ nutrient entries, and
+	// they'd be re-sent as input tokens on every remaining round.
+	slim := make([]nutrition.FDCFood, len(results))
+	for i, f := range results {
+		if len(f.Nutrients) > 0 {
+			payload, err := json.Marshal(struct {
+				Nutrients []nutrition.NutrientAmount `json:"nutrients"`
+			}{f.Nutrients})
+			if err == nil {
+				cache[food.SourceUSDA+":"+strconv.Itoa(f.FDCID)] = payload
+			}
+		}
+		f.Nutrients = nil
+		slim[i] = f
+	}
+	body, err := json.Marshal(slim)
 	if err != nil {
 		return ToolResultBlock(block.ID, fmt.Sprintf("failed to encode usda_search results: %v", err), true)
 	}
 	return ToolResultBlock(block.ID, string(body), false)
 }
 
-func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta) json.RawMessage {
+func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache microsCache) json.RawMessage {
 	var in struct {
 		Code string `json:"code"`
 	}
@@ -181,7 +207,10 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta) json.RawMe
 		p.log.Warn("off_barcode lookup failed", "code", in.Code, "error", err)
 		return ToolResultBlock(block.ID, fmt.Sprintf("off_barcode failed: %v -- estimate this item instead.", err), true)
 	}
-	body, err := json.Marshal(product)
+	if len(product.RawNutriments) > 0 {
+		cache[food.SourceOFF+":"+in.Code] = product.RawNutriments
+	}
+	body, err := json.Marshal(product) // RawNutriments is json:"-", so the model gets the slim view
 	if err != nil {
 		return ToolResultBlock(block.ID, fmt.Sprintf("failed to encode off_barcode result: %v", err), true)
 	}
@@ -191,8 +220,9 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta) json.RawMe
 // finish validates every item (Atwater warnings and enum/range errors both
 // fold into notes and clamp confidence to low -- the AI never writes to the
 // DB, so a rough item just becomes something Jim edits or deletes in the
-// draft preview) and packages the trace as ai_raw.
-func (p *Parser) finish(in *recordMealInput, model string, messages []Message) (*food.ParseResult, error) {
+// draft preview), attaches cached full nutrient payloads as micros, and
+// packages the trace as ai_raw.
+func (p *Parser) finish(in *recordMealInput, model string, messages []Message, cache microsCache) (*food.ParseResult, error) {
 	var extraNotes []string
 	for i := range in.Items {
 		it := &in.Items[i]
@@ -205,6 +235,11 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message) (
 		}
 		if it.Confidence == "" {
 			it.Confidence = food.ConfidenceMedium
+		}
+		if len(it.Micros) == 0 && it.SourceRef != nil && *it.SourceRef != "" {
+			if payload, ok := cache[it.Source+":"+*it.SourceRef]; ok {
+				it.Micros = payload
+			}
 		}
 		errs, warnings := food.ValidateItem(*it)
 		if len(errs) > 0 {
@@ -246,7 +281,7 @@ DIET FRAMEWORK -- the source of truth for the "tier" field on every item. Apply 
 
 TIERS
 - hard_yes = 100, soft_yes = 75, neutral = 50, soft_no = 25, hard_no = 0.
-- "neutral" means the framework above does not address this food at all. Do not stretch a food into hard_yes/hard_no just because it generally feels healthy or unhealthy -- use neutral when it's genuinely unaddressed, and explain your tier choice briefly in tier_reason either way.
+- "neutral" means the framework above does not address this food at all. Do not stretch a food into hard_yes/hard_no just because it generally feels healthy or unhealthy -- use neutral when it's genuinely unaddressed. tier_reason is five words or fewer, either way.
 
 UNITS -- integers only, never floats, in every numeric field you return
 - calories: integer kcal, for the FULL portion (not as-eaten)
@@ -256,6 +291,7 @@ UNITS -- integers only, never floats, in every numeric field you return
 
 TOOLS AND ESTIMATION
 - Prefer usda_search for whole foods and common dishes (e.g. "grilled chicken breast", "banana", "brown rice"). Prefer Foundation/SR Legacy results over Branded when both are plausible matches.
+- Batch your lookups: issue every usda_search call (one per item) together in a single response. A typical parse is two turns total -- one batched lookup turn, then record_meal. Only take an extra turn when a first search came back empty or clearly wrong.
 - Use off_barcode when barcode digits are visible in a photo or given directly.
 - Estimate from your own knowledge only when a lookup fails, returns nothing useful, or the food is a composite homemade dish that no database entry represents well (e.g. "chicken stir fry with vegetables"). In that case set source to "ai" and use confidence "medium" or "low" as appropriate.
 - For a photographed nutrition label, read the numbers directly off the label and set source to "label".
@@ -270,6 +306,6 @@ PHOTOS -- when the first message includes an image, decide which of these it is 
 - Plate of food: identify each distinct component separately, estimate each one's portion weight from visual cues (use a ~27cm dinner plate as your size reference when one is visible), and usda_search each. Set confidence honestly per item -- a clearly identifiable component can be "medium"/"high", a hard-to-judge one should be "low".
 
 FINISHING
-- Always state every assumption you made (portion size, preparation method, ingredient substitutions, ambiguous wording) in notes, even if brief.
+- notes is a glance-line for Jim, not a report: at most one short sentence, and only for something he couldn't guess himself (an unusual portion assumption, ambiguous wording, a failed lookup). When the read was straightforward, return an empty string. Never re-list the items or narrate your process.
 - Call record_meal exactly once, as your final action, to submit the parsed items.`, day, docs.DietFramework)
 }

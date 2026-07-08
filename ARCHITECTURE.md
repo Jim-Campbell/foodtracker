@@ -221,10 +221,13 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
 - **System prompt** embeds `docs/diet-framework.md` verbatim, the tier
   definitions, the unit conventions (kcal, milligrams), and instructions:
   parse casually described meals; prefer USDA lookups for whole foods and
-  common dishes; use the barcode tool when digits are visible/known; estimate
-  from knowledge only when lookups fail; always state assumptions in `notes`;
-  for plate photos estimate portions from visual cues; a "half of this" style
-  hint sets `fraction_pct`, not scaled-down nutrition values.
+  common dishes, **batching every lookup into one turn** (a typical parse is
+  two model calls: lookups, then `record_meal`); use the barcode tool when
+  digits are visible/known; estimate from knowledge only when lookups fail;
+  keep `notes` to at most one short sentence and only for non-obvious
+  assumptions (empty when the read was straightforward); for plate photos
+  estimate portions from visual cues; a "half of this" style hint sets
+  `fraction_pct`, not scaled-down nutrition values.
 - **Tools exposed to Claude:**
   - `usda_search(query, page_size)` → top matches from FDC `/v1/foods/search`
     with per-100g core nutrients (implemented in `internal/nutrition/fdc.go`;
@@ -240,6 +243,14 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
   `off_barcode`.
 - Max ~8 tool-use rounds, then force `record_meal`. Model from `AI_MODEL` env
   (default `claude-sonnet-5`).
+- **Tool results are slim; `micros` is attached server-side.** Lookup results
+  sent to the model exclude per-nutrient lists (an FDC food can carry 100+
+  nutrient entries — as tokens they made parses slow and expensive, and the
+  model would then re-type them into `record_meal`). Instead the parser caches
+  each lookup's full payload during the parse and `finish()` attaches it as
+  the item's `micros` by matching `source:source_ref` — richer data than a
+  model transcription, at zero token cost. `record_meal` has no `micros`
+  field.
 
 ### Validation (server-side, deterministic)
 

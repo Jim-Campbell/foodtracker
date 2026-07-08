@@ -17,7 +17,7 @@ var usdaSearchSchema = json.RawMessage(`{
     },
     "page_size": {
       "type": "integer",
-      "description": "Number of results to return (default 5, max 25)."
+      "description": "Number of results to return (default 3, max 10)."
     }
   },
   "required": ["query"]
@@ -59,13 +59,12 @@ var recordMealSchema = json.RawMessage(`{
           "sat_fat_mg": { "type": "integer", "description": "Full-portion saturated fat in milligrams." },
           "sugar_mg": { "type": "integer", "description": "Full-portion sugar in milligrams." },
           "sodium_mg": { "type": "integer", "description": "Full-portion sodium in milligrams." },
-          "micros": { "type": "object", "description": "Optional extra nutrient payload from the source (vitamins, minerals, etc), any shape." },
           "tier": {
             "type": "string",
             "enum": ["hard_yes", "soft_yes", "neutral", "soft_no", "hard_no"],
             "description": "Quality tier per the diet framework. Use 'neutral' only when the framework doesn't address this food."
           },
-          "tier_reason": { "type": "string", "description": "Short reason citing the diet framework." },
+          "tier_reason": { "type": "string", "description": "Five words or fewer, citing the diet framework." },
           "source": {
             "type": "string",
             "enum": ["usda", "off", "ai", "label", "manual"],
@@ -82,7 +81,7 @@ var recordMealSchema = json.RawMessage(`{
     },
     "notes": {
       "type": "string",
-      "description": "Assumptions made while parsing (portions, substitutions, ambiguous items). Always state something here, even if just confirming the read was unambiguous."
+      "description": "At most one short sentence, and only for a non-obvious assumption (unusual portion guess, ambiguous wording, failed lookup). Empty string when the parse was straightforward. Never re-list the items."
     }
   },
   "required": ["items", "notes"]
@@ -92,7 +91,7 @@ func tools() []Tool {
 	return []Tool{
 		{
 			Name:        toolUSDASearch,
-			Description: "Search USDA FoodData Central for a whole food or common dish. Prefer this over estimating for anything not a homemade composite dish.",
+			Description: "Search USDA FoodData Central for a whole food or common dish. Prefer this over estimating for anything not a homemade composite dish. Call it once per item, batching all of a meal's searches into a single response.",
 			InputSchema: usdaSearchSchema,
 		},
 		{
