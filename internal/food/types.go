@@ -165,3 +165,12 @@ type ParseResult struct {
 	AIModel string          `json:"ai_model"`
 	AIRaw   json.RawMessage `json:"ai_raw,omitempty"`
 }
+
+// ExportDoc is the full-database backup returned by GET /api/export — the
+// backup story for Render's ephemeral disk. Meals are ordered by day.
+type ExportDoc struct {
+	ExportedAt time.Time `json:"exported_at"`
+	Settings   Settings  `json:"settings"`
+	Weights    []Weight  `json:"weights"`
+	Meals      []Meal    `json:"meals"`
+}

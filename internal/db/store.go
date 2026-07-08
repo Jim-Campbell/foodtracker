@@ -169,6 +169,11 @@ func (d *DB) itemsForMeals(ctx context.Context, mealIDs []int64) (map[int64][]fo
 	return result, rows.Err()
 }
 
+// ListAllMeals returns every meal with its items, ordered by day, for export.
+func (d *DB) ListAllMeals(ctx context.Context) ([]food.Meal, error) {
+	return d.queryMeals(ctx, "TRUE", nil)
+}
+
 func (d *DB) UpdateMeal(ctx context.Context, m *food.Meal) error {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
@@ -233,6 +238,27 @@ func (d *DB) ListWeights(ctx context.Context, start, end string) ([]food.Weight,
 		ORDER BY day`, start, end)
 	if err != nil {
 		return nil, fmt.Errorf("list weights: %w", err)
+	}
+	defer rows.Close()
+
+	var weights []food.Weight
+	for rows.Next() {
+		var w food.Weight
+		var day time.Time
+		if err := rows.Scan(&day, &w.WeightG, &w.Note); err != nil {
+			return nil, fmt.Errorf("scan weight: %w", err)
+		}
+		w.Day = day.Format("2006-01-02")
+		weights = append(weights, w)
+	}
+	return weights, rows.Err()
+}
+
+// ListAllWeights returns every weigh-in, ordered by day, for export.
+func (d *DB) ListAllWeights(ctx context.Context) ([]food.Weight, error) {
+	rows, err := d.pool.Query(ctx, `SELECT day, weight_g, note FROM weights ORDER BY day`)
+	if err != nil {
+		return nil, fmt.Errorf("list all weights: %w", err)
 	}
 	defer rows.Close()
 

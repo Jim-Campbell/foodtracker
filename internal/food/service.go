@@ -211,3 +211,32 @@ func (s *Service) RangeSummary(ctx context.Context, start, end string) ([]RangeD
 	}
 	return rows, nil
 }
+
+// ---- export ----
+
+func (s *Service) Export(ctx context.Context) (*ExportDoc, error) {
+	settings, err := s.store.GetSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	weights, err := s.store.ListAllWeights(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if weights == nil {
+		weights = []Weight{}
+	}
+	meals, err := s.store.ListAllMeals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if meals == nil {
+		meals = []Meal{}
+	}
+	return &ExportDoc{
+		ExportedAt: time.Now().UTC(),
+		Settings:   *settings,
+		Weights:    weights,
+		Meals:      meals,
+	}, nil
+}

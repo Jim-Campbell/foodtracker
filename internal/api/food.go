@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -40,6 +41,8 @@ func (h *Handler) Routes(r chi.Router) {
 
 	r.Get("/settings", h.getSettings)
 	r.Put("/settings", h.updateSettings)
+
+	r.Get("/export", h.export)
 }
 
 // ---- meals ----
@@ -226,6 +229,22 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// ---- export ----
+
+// export streams the full DB as a single JSON document — the backup story
+// for Render's ephemeral disk (see internal/backup in the sibling finance
+// app for why this matters). Dependency-free: encoding/json only.
+func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
+	doc, err := h.svc.Export(r.Context())
+	if err != nil {
+		h.fail(w, "export", err)
+		return
+	}
+	filename := "food-export-" + time.Now().UTC().Format("20060102") + ".json"
+	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
+	writeJSON(w, http.StatusOK, doc)
 }
 
 // ---- errors ----

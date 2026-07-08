@@ -111,6 +111,22 @@ func (f *fakeStore) DaySummary(ctx context.Context, day string) (*DaySummary, er
 	return ds, nil
 }
 
+func (f *fakeStore) ListAllMeals(ctx context.Context) ([]Meal, error) {
+	var out []Meal
+	for _, m := range f.meals {
+		out = append(out, *m)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListAllWeights(ctx context.Context) ([]Weight, error) {
+	var out []Weight
+	for _, w := range f.weights {
+		out = append(out, w)
+	}
+	return out, nil
+}
+
 func (f *fakeStore) RangeSummary(ctx context.Context, start, end string) ([]RangeDay, error) {
 	byDay := map[string][]MealItem{}
 	for _, m := range f.meals {

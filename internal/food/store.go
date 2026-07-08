@@ -20,4 +20,7 @@ type Store interface {
 
 	DaySummary(ctx context.Context, day string) (*DaySummary, error)
 	RangeSummary(ctx context.Context, start, end string) ([]RangeDay, error)
+
+	ListAllMeals(ctx context.Context) ([]Meal, error)
+	ListAllWeights(ctx context.Context) ([]Weight, error)
 }
