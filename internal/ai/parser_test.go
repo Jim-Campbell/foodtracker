@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -234,6 +235,62 @@ func TestParserRoundCapForcesRecordMeal(t *testing.T) {
 	}
 	if !strings.Contains(result.Notes, "forced after exhausting lookups") {
 		t.Errorf("Notes = %q, want the forced-round record_meal notes", result.Notes)
+	}
+}
+
+func TestParserImageMessageShape(t *testing.T) {
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) { it.Source = food.SourceLabel })},
+				Notes: "read straight off the label",
+			})},
+		},
+	}}
+
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
+	imageBytes := []byte("fake-png-bytes")
+	result, err := p.ParseImage(context.Background(), imageBytes, "image/png", "I had half of this", "2026-07-07")
+	if err != nil {
+		t.Fatalf("ParseImage: %v", err)
+	}
+	if result.Items[0].Source != food.SourceLabel {
+		t.Errorf("Source = %q, want label", result.Items[0].Source)
+	}
+
+	firstMsg := messenger.calls[0].Messages[0]
+	if firstMsg.Role != RoleUser {
+		t.Fatalf("first message role = %q, want user", firstMsg.Role)
+	}
+	if len(firstMsg.Content) != 2 {
+		t.Fatalf("first message has %d content blocks, want 2 (image + text)", len(firstMsg.Content))
+	}
+	if decodeBlockType(t, firstMsg.Content[0]) != "image" {
+		t.Errorf("first block type = %q, want image", decodeBlockType(t, firstMsg.Content[0]))
+	}
+	var img struct {
+		Source struct {
+			Data string `json:"data"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal(firstMsg.Content[0], &img); err != nil {
+		t.Fatalf("decode image block: %v", err)
+	}
+	if got := base64.StdEncoding.EncodeToString(imageBytes); img.Source.Data != got {
+		t.Errorf("image data = %q, want base64 of the original bytes %q", img.Source.Data, got)
+	}
+	if decodeBlockType(t, firstMsg.Content[1]) != "text" {
+		t.Errorf("second block type = %q, want text", decodeBlockType(t, firstMsg.Content[1]))
+	}
+	var textBlock struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(firstMsg.Content[1], &textBlock); err != nil {
+		t.Fatalf("decode text block: %v", err)
+	}
+	if !strings.Contains(textBlock.Text, "I had half of this") {
+		t.Errorf("text block = %q, want it to contain the hint", textBlock.Text)
 	}
 }
 

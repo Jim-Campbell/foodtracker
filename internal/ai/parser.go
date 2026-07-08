@@ -44,6 +44,16 @@ func (p *Parser) ParseText(ctx context.Context, text, day string) (*food.ParseRe
 	return p.Parse(ctx, UserMessage(TextBlock(text)), day)
 }
 
+// ParseImage parses a photo (label, barcode, package, or plate) plus an
+// optional hint like "I had half of this".
+func (p *Parser) ParseImage(ctx context.Context, imageData []byte, mediaType, hint, day string) (*food.ParseResult, error) {
+	hintText := "No hint was given -- read the photo directly and parse it (nutrition label, barcode, package, or plate of food)."
+	if hint != "" {
+		hintText = "Hint from Jim: " + hint
+	}
+	return p.Parse(ctx, UserMessage(ImageBlock(mediaType, imageData), TextBlock(hintText)), day)
+}
+
 // Parse runs the tool loop starting from a prepared first user message --
 // text today, a vision message (image + hint) in phase 4.
 func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.ParseResult, error) {
@@ -252,6 +262,12 @@ TOOLS AND ESTIMATION
 
 PORTIONS
 - A hint like "I had half of this" or "just the salmon" sets fraction_pct on the affected item(s) (e.g. 50) -- it does NOT mean you should pre-scale calories/macros. Always report FULL-PORTION nutrition values and let fraction_pct carry the eaten fraction.
+
+PHOTOS -- when the first message includes an image, decide which of these it is and follow the matching rule:
+- Nutrition label visible: transcribe the panel exactly as printed (serving size, servings per container, per-serving values). Set source to "label". Compute full-portion values from how many servings Jim actually ate: a hint like "I ate the whole box" multiplies the per-serving values by servings per container; with no hint, assume one serving and say so in notes.
+- Barcode with legible digits: call off_barcode with the digits. On a hit, set source to "off" and source_ref to the barcode. On a miss, fall back to reading the package text and using usda_search.
+- Package front only (no label, no barcode): identify the product from what's visible, then usda_search a Branded match or estimate; confidence is "medium" at best.
+- Plate of food: identify each distinct component separately, estimate each one's portion weight from visual cues (use a ~27cm dinner plate as your size reference when one is visible), and usda_search each. Set confidence honestly per item -- a clearly identifiable component can be "medium"/"high", a hard-to-judge one should be "low".
 
 FINISHING
 - Always state every assumption you made (portion size, preparation method, ingredient substitutions, ambiguous wording) in notes, even if brief.

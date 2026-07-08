@@ -15,6 +15,7 @@ import (
 	"github.com/jimgcampbell/food/internal/db"
 	"github.com/jimgcampbell/food/internal/food"
 	"github.com/jimgcampbell/food/internal/nutrition"
+	"github.com/jimgcampbell/food/internal/storage"
 )
 
 func main() {
@@ -99,21 +100,34 @@ func run(log *slog.Logger) error {
 	svc := food.NewService(database, log)
 	handler := api.NewHandler(svc, log)
 
-	var parser api.Parser // left nil (not a typed nil) when AI isn't configured, so /api/parse can 503 cleanly
+	// textParser/imageParser are left nil (not typed nils) when AI isn't
+	// configured, so /api/parse and /api/analyze-photo can 503 cleanly.
+	var textParser api.Parser
+	var imageParser api.ImageParser
 	if aiEnabled {
 		client := ai.NewClient(cfg.AnthropicKey, cfg.AIModel)
 		fdc := nutrition.NewFDCClient(cfg.FDCKey)
 		off := nutrition.NewOFFClient()
-		parser = ai.NewParser(client, fdc, off, log)
+		parser := ai.NewParser(client, fdc, off, log)
+		textParser = parser
+		imageParser = parser
 	}
-	aiHandler := api.NewAIHandler(parser, log)
+	aiHandler := api.NewAIHandler(textParser, log)
+
+	// photoStore is left nil (not a typed nil) when R2 isn't configured, so
+	// /api/photos and /api/analyze-photo can 503 cleanly.
+	var photoStore api.PhotoStore
+	if photosEnabled {
+		photoStore = storage.NewR2Client(cfg.R2AccountID, cfg.R2AccessKey, cfg.R2SecretKey, cfg.R2Bucket, cfg.R2PublicURL)
+	}
+	photoHandler := api.NewPhotoHandler(photoStore, imageParser, log)
 
 	r := api.NewRouter(api.Config{
 		APIKey: cfg.APIKey,
 		Photos: photosEnabled,
 		AI:     aiEnabled,
 		PWADir: cfg.PWADir,
-	}, handler, aiHandler, log)
+	}, handler, aiHandler, photoHandler, log)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
