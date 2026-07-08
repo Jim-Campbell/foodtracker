@@ -15,7 +15,7 @@ layout. Build-phase prompts live in `build-prompts/`.
 
 ## Tech Stack
 
-- Go 1.24, chi router, pgx/v5, PostgreSQL (Render-hosted in production)
+- Go 1.25, chi router, pgx/v5, PostgreSQL (Render-hosted in production)
 - Vanilla JS single-file PWA in `pwa/` served by the Go binary
 - Anthropic API via hand-rolled client (no SDK) — vision-capable model,
   default `claude-sonnet-5`
@@ -63,7 +63,7 @@ layout. Build-phase prompts live in `build-prompts/`.
 
 ## Deployment
 
-Render, from the `Dockerfile` (multi-stage `golang:1.24-alpine` → `alpine`,
+Render, from the `Dockerfile` (multi-stage `golang:1.25-alpine` → `alpine`,
 `GOTOOLCHAIN=local`). Migrations run automatically at startup. Never point a
 local server at the production `DATABASE_URL`.
 

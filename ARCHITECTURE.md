@@ -24,7 +24,7 @@ sophisticated analyses can be run later.
 
 ## Tech stack
 
-- Go 1.24, chi router, pgx/v5, PostgreSQL (Render-hosted in production)
+- Go 1.25, chi router, pgx/v5, PostgreSQL (Render-hosted in production)
 - Vanilla JS single-file PWA in `pwa/` served by the Go binary
 - Anthropic API (vision-capable model, default `claude-sonnet-5`) via a
   hand-rolled client — copy the pattern from `~/projects/journal/internal/ai/claude.go`
@@ -47,7 +47,7 @@ sophisticated analyses can be run later.
 │   └── storage/         # R2 client (copied from journal)
 ├── pwa/                 # single-file vanilla JS PWA (index.html, manifest, sw.js)
 ├── docs/                # diet-framework.md (AI classification source of truth)
-└── Dockerfile           # multi-stage golang:1.24-alpine → alpine (like finance)
+└── Dockerfile           # multi-stage golang:1.25-alpine → alpine (like finance)
 ```
 
 ## Domain invariants (do not break)
@@ -291,7 +291,7 @@ Open Food Facts needs no key (send a descriptive `User-Agent`).
 
 ## Deployment
 
-Render web service from the `Dockerfile` (multi-stage `golang:1.24-alpine` →
+Render web service from the `Dockerfile` (multi-stage `golang:1.25-alpine` →
 `alpine`, `GOTOOLCHAIN=local` — same caveats as finance). Migrations run at
 startup. Production Postgres on Render. Smoke test locally against a scratch
 DB, never the cloud DB:
