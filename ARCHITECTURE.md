@@ -66,8 +66,10 @@ sophisticated analyses can be run later.
   summaries group by `day`.
 - **Quality tier is stored per item; the composite score is computed, never
   stored.** Tiers: `hard_yes`, `soft_yes`, `neutral`, `soft_no`, `hard_no`
-  (`neutral` = not addressed by the framework). Only the composite score is
-  shown day-to-day; tiers stay in the DB for later analysis.
+  (`neutral` = not addressed by the framework). Day-to-day views show only
+  the composite score; tapping the score badge opens the day's per-item tier
+  breakdown (tier, reason, calorie share). Tiers stay in the DB for later
+  analysis.
 - **Keep every AI parse's raw output** (`meals.ai_raw JSONB`) and every
   nutrition source's full nutrient payload (`meal_items.micros JSONB`) — the
   point is a database rich enough for future analyses.

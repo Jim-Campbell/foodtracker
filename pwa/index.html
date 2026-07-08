@@ -90,7 +90,10 @@ input[type=text], input[type=number], input[type=date] {
 .ring-fg { fill: none; stroke-width: 10; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 60px 60px; transition: stroke-dashoffset .3s; }
 .ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .ring-center .big { font-size: 2rem; }
-.score-badge { position: absolute; top: 14px; right: 14px; color: #fff; font-weight: 700; font-size: .85rem; border-radius: 10px; padding: 3px 10px; }
+.score-badge { position: absolute; top: 14px; right: 14px; color: #fff; font-weight: 700; font-size: .85rem; border-radius: 10px; padding: 3px 10px; border: none; cursor: pointer; font-family: inherit; }
+.scorerow { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.scorerow:last-child { border-bottom: none; }
+.tierchip { color: #fff; font-weight: 700; font-size: .75rem; border-radius: 8px; padding: 3px 7px; flex-shrink: 0; min-width: 30px; text-align: center; }
 .pbar { background: var(--chip); border-radius: 5px; height: 10px; margin: 18px 0 4px; overflow: hidden; }
 .pbar-fill { height: 100%; transition: width .3s; }
 .pbar-label { font-size: .8rem; color: var(--muted); }
@@ -265,10 +268,45 @@ function proteinBar(eatenMg, targetMg) {
   return `<div class="pbar"><div class="pbar-fill" style="width:${pct}%;background:${over ? 'var(--green)' : 'var(--primary)'}"></div></div>
   <div class="pbar-label">${Math.round(eatenMg / 1000)} / ${Math.round(targetMg / 1000)} g protein</div>`;
 }
+function scoreColor(score) {
+  return score >= 80 ? 'var(--green)' : score >= 60 ? 'var(--amber)' : 'var(--red)';
+}
 function scoreBadge(score) {
   if (score == null) return '';
-  const color = score >= 80 ? 'var(--green)' : score >= 60 ? 'var(--amber)' : 'var(--red)';
-  return `<span class="score-badge" style="background:${color}">${score}</span>`;
+  return `<button class="score-badge" style="background:${scoreColor(score)}" onclick="showScoreInfo()" title="How this score is computed">${score}</button>`;
+}
+const TIERS = {
+  hard_yes: { label: 'Hard Yes', val: 100, color: 'var(--green)' },
+  soft_yes: { label: 'Soft Yes', val: 75, color: '#6f9a3c' },
+  neutral:  { label: 'Neutral',  val: 50, color: 'var(--muted)' },
+  soft_no:  { label: 'Soft No',  val: 25, color: 'var(--amber)' },
+  hard_no:  { label: 'Hard No',  val: 0,  color: 'var(--red)' },
+};
+function showScoreInfo() {
+  const s = S.summary;
+  if (!s || s.score == null) return;
+  const items = (s.meals || []).flatMap(m => m.items || [])
+    .map(it => ({ ...it, eatenCal: Math.round(it.calories * it.fraction_pct / 100) }));
+  const counted = items.filter(it => it.eatenCal > 0).sort((a, b) => b.eatenCal - a.eatenCal);
+  const skipped = items.length - counted.length;
+  const totalCal = counted.reduce((t, it) => t + it.eatenCal, 0);
+  const rows = counted.map(it => {
+    const tier = TIERS[it.tier] || TIERS.neutral;
+    const sharePct = totalCal > 0 ? Math.round(it.eatenCal * 100 / totalCal) : 0;
+    return `<div class="scorerow">
+      <span class="tierchip" style="background:${tier.color}">${tier.val}</span>
+      <div class="grow">
+        <div class="m">${esc(it.name)}</div>
+        <div class="s">${tier.label}${it.tier_reason ? ' — ' + esc(it.tier_reason) : ''}</div>
+      </div>
+      <div class="s" style="text-align:right;flex-shrink:0">${it.eatenCal} cal<br>${sharePct}%</div>
+    </div>`;
+  }).join('');
+  openDialog(`<h2>Quality score <span class="score-badge" style="background:${scoreColor(s.score)};position:static">${s.score}</span></h2>
+    <p class="s muted" style="margin:8px 0 12px">Each food gets a framework tier — Hard Yes 100 · Soft Yes 75 · Neutral 50 · Soft No 25 · Hard No 0 — and the day's score is the average, weighted by each food's share of the day's calories.</p>
+    ${rows || '<div class="empty">No calorie-bearing items yet</div>'}
+    ${skipped ? `<div class="s muted" style="margin-top:8px">${skipped} zero-calorie item${skipped > 1 ? 's' : ''} not counted.</div>` : ''}
+    <div class="dlg-actions"><button class="btn" onclick="closeDialog()">Close</button></div>`);
 }
 function groupMeals(meals) {
   const g = { breakfast: [], lunch: [], dinner: [], snack: [], unslotted: [] };

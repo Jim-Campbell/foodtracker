@@ -43,8 +43,9 @@ layout. Build-phase prompts live in `build-prompts/`.
   the timestamp. All summaries group by `day`.
 - Quality tiers (`hard_yes/soft_yes/neutral/soft_no/hard_no`) are stored per
   item; the composite day score (calorie-weighted mean of tier values
-  100/75/50/25/0, zero-calorie items excluded) is **computed, never stored**,
-  and is the only quality number shown in the UI.
+  100/75/50/25/0, zero-calorie items excluded) is **computed, never stored**.
+  Day-to-day views show only the composite score; the per-item tier breakdown
+  lives behind a tap on the score badge.
 - The AI never writes to the DB. Parse endpoints return drafts; only explicit
   saves persist. Totals are always recomputed in Go/SQL — never trust AI
   arithmetic. Keep raw AI output in `meals.ai_raw` and full nutrient payloads
