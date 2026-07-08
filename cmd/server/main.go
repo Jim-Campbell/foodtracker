@@ -10,9 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jimgcampbell/food/internal/ai"
 	"github.com/jimgcampbell/food/internal/api"
 	"github.com/jimgcampbell/food/internal/db"
 	"github.com/jimgcampbell/food/internal/food"
+	"github.com/jimgcampbell/food/internal/nutrition"
 )
 
 func main() {
@@ -35,6 +37,7 @@ func run(log *slog.Logger) error {
 		PWADir      string
 		// Optional — used only to report configured/not-configured in health
 		AnthropicKey string
+		AIModel      string
 		FDCKey       string
 		R2AccountID  string
 		R2AccessKey  string
@@ -48,6 +51,7 @@ func run(log *slog.Logger) error {
 		MigrDir:      getEnv("MIGRATIONS_DIR", "internal/db/migrations"),
 		PWADir:       getEnv("PWA_DIR", "pwa"),
 		AnthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
+		AIModel:      getEnv("AI_MODEL", ai.DefaultModel),
 		FDCKey:       os.Getenv("FDC_API_KEY"),
 		R2AccountID:  os.Getenv("R2_ACCOUNT_ID"),
 		R2AccessKey:  os.Getenv("R2_ACCESS_KEY_ID"),
@@ -94,12 +98,22 @@ func run(log *slog.Logger) error {
 
 	svc := food.NewService(database, log)
 	handler := api.NewHandler(svc, log)
+
+	var parser api.Parser // left nil (not a typed nil) when AI isn't configured, so /api/parse can 503 cleanly
+	if aiEnabled {
+		client := ai.NewClient(cfg.AnthropicKey, cfg.AIModel)
+		fdc := nutrition.NewFDCClient(cfg.FDCKey)
+		off := nutrition.NewOFFClient()
+		parser = ai.NewParser(client, fdc, off, log)
+	}
+	aiHandler := api.NewAIHandler(parser, log)
+
 	r := api.NewRouter(api.Config{
 		APIKey: cfg.APIKey,
 		Photos: photosEnabled,
 		AI:     aiEnabled,
 		PWADir: cfg.PWADir,
-	}, handler, log)
+	}, handler, aiHandler, log)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

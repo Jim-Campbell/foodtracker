@@ -19,7 +19,7 @@ type Config struct {
 	PWADir string
 }
 
-func NewRouter(cfg Config, h *Handler, log *slog.Logger) *chi.Mux {
+func NewRouter(cfg Config, h *Handler, ai *AIHandler, log *slog.Logger) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(chiMiddleware.RequestID)
@@ -36,6 +36,7 @@ func NewRouter(cfg Config, h *Handler, log *slog.Logger) *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(AuthMiddleware(cfg.APIKey))
 			h.Routes(r)
+			ai.Routes(r)
 			r.HandleFunc("/*", func(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "not found")
 			})

@@ -1,0 +1,210 @@
+// Package ai is the hand-rolled Anthropic Messages API client and the
+// agentic meal-parsing loop built on top of it.
+package ai
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+const (
+	messagesURL      = "https://api.anthropic.com/v1/messages"
+	anthropicVersion = "2023-06-01"
+
+	// DefaultModel is used when AI_MODEL is unset.
+	DefaultModel     = "claude-sonnet-5"
+	DefaultMaxTokens = 4096
+
+	RoleUser      = "user"
+	RoleAssistant = "assistant"
+)
+
+// Client is a minimal Anthropic Messages API client with tool-use and image
+// content-block support -- no SDK, matching the journal/finance pattern.
+type Client struct {
+	apiKey     string
+	model      string
+	httpClient *http.Client
+}
+
+func NewClient(apiKey, model string) *Client {
+	if model == "" {
+		model = DefaultModel
+	}
+	return &Client{
+		apiKey:     strings.TrimSpace(apiKey),
+		model:      model,
+		httpClient: &http.Client{Timeout: 90 * time.Second},
+	}
+}
+
+// ImageSource is a base64-encoded image content block source.
+type ImageSource struct {
+	Type      string `json:"type"` // "base64"
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+// ContentBlock covers every block shape this app sends or receives: text,
+// image (request only), tool_use (response, and echoed back when replaying
+// an assistant turn), and tool_result (request only).
+type ContentBlock struct {
+	Type string `json:"type"`
+
+	Text string `json:"text,omitempty"`
+
+	Source *ImageSource `json:"source,omitempty"`
+
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
+
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
+}
+
+func TextBlock(s string) ContentBlock {
+	return ContentBlock{Type: "text", Text: s}
+}
+
+// ImageBlock builds a base64 image content block. mediaType is e.g.
+// "image/jpeg".
+func ImageBlock(mediaType string, data []byte) ContentBlock {
+	return ContentBlock{
+		Type: "image",
+		Source: &ImageSource{
+			Type:      "base64",
+			MediaType: mediaType,
+			Data:      base64.StdEncoding.EncodeToString(data),
+		},
+	}
+}
+
+func ToolResultBlock(toolUseID, content string, isError bool) ContentBlock {
+	return ContentBlock{Type: "tool_result", ToolUseID: toolUseID, Content: content, IsError: isError}
+}
+
+type Message struct {
+	Role    string         `json:"role"`
+	Content []ContentBlock `json:"content"`
+}
+
+func UserMessage(blocks ...ContentBlock) Message {
+	return Message{Role: RoleUser, Content: blocks}
+}
+
+// Tool describes one tool available to the model. InputSchema is a raw JSON
+// Schema object, hand-written (no reflection, no SDK).
+type Tool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+}
+
+// ToolChoice forces or allows tool use. Type is "auto" or "tool"; Name is
+// required when Type is "tool".
+type ToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+}
+
+type Request struct {
+	Model      string      `json:"model"`
+	MaxTokens  int         `json:"max_tokens"`
+	System     string      `json:"system,omitempty"`
+	Messages   []Message   `json:"messages"`
+	Tools      []Tool      `json:"tools,omitempty"`
+	ToolChoice *ToolChoice `json:"tool_choice,omitempty"`
+}
+
+type Response struct {
+	ID         string         `json:"id"`
+	Role       string         `json:"role"`
+	Content    []ContentBlock `json:"content"`
+	Model      string         `json:"model"`
+	StopReason string         `json:"stop_reason"`
+	Error      *apiError      `json:"error,omitempty"`
+}
+
+type apiError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+// Messenger is the interface Parser depends on, so tests can script
+// responses without any HTTP transport.
+type Messenger interface {
+	CreateMessage(ctx context.Context, req Request) (*Response, error)
+}
+
+// CreateMessage sends one Messages API call, retrying on transient
+// overloaded/server-error responses.
+func (c *Client) CreateMessage(ctx context.Context, req Request) (*Response, error) {
+	if req.Model == "" {
+		req.Model = c.model
+	}
+	if req.MaxTokens == 0 {
+		req.MaxTokens = DefaultMaxTokens
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal anthropic request: %w", err)
+	}
+
+	const maxRetries = 4
+	backoff := 2 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messagesURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create anthropic request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("x-api-key", c.apiKey)
+		httpReq.Header.Set("anthropic-version", anthropicVersion)
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("anthropic request: %w", err)
+		}
+		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("read anthropic response: %w", err)
+		}
+
+		if (resp.StatusCode == 529 || resp.StatusCode == http.StatusServiceUnavailable) && attempt < maxRetries {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("anthropic API error %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		var out Response
+		if err := json.Unmarshal(respBody, &out); err != nil {
+			return nil, fmt.Errorf("unmarshal anthropic response: %w", err)
+		}
+		if out.Error != nil {
+			return nil, fmt.Errorf("anthropic error: %s", out.Error.Message)
+		}
+		return &out, nil
+	}
+
+	return nil, fmt.Errorf("anthropic API overloaded after %d retries", maxRetries)
+}
