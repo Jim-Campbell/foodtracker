@@ -52,9 +52,15 @@ type ImageSource struct {
 	Data      string `json:"data"`
 }
 
-// ContentBlock covers every block shape this app sends or receives: text,
-// image (request only), tool_use (response, and echoed back when replaying
-// an assistant turn), and tool_result (request only).
+// ContentBlock is used only to construct the block types this app
+// originates: text, image, and tool_result. It is marshaled to a
+// json.RawMessage immediately (see blockJSON) and never used to represent
+// blocks the model sends back to us -- those are kept as raw JSON (see
+// Message.Content) so fields this app doesn't model (a "thinking" block's
+// thinking/signature, a future block type, etc.) survive being echoed back
+// on the next round untouched. Anthropic's API rejects a thinking block
+// replayed without its original signature, which is exactly what a lossy
+// typed round-trip would produce.
 type ContentBlock struct {
 	Type string `json:"type"`
 
@@ -62,42 +68,50 @@ type ContentBlock struct {
 
 	Source *ImageSource `json:"source,omitempty"`
 
-	ID    string          `json:"id,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
-
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	Content   string `json:"content,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`
 }
 
-func TextBlock(s string) ContentBlock {
-	return ContentBlock{Type: "text", Text: s}
+func blockJSON(b ContentBlock) json.RawMessage {
+	raw, err := json.Marshal(b)
+	if err != nil {
+		panic(fmt.Sprintf("ai: marshal content block: %v", err)) // unreachable: b has no unmarshalable fields
+	}
+	return raw
+}
+
+func TextBlock(s string) json.RawMessage {
+	return blockJSON(ContentBlock{Type: "text", Text: s})
 }
 
 // ImageBlock builds a base64 image content block. mediaType is e.g.
 // "image/jpeg".
-func ImageBlock(mediaType string, data []byte) ContentBlock {
-	return ContentBlock{
+func ImageBlock(mediaType string, data []byte) json.RawMessage {
+	return blockJSON(ContentBlock{
 		Type: "image",
 		Source: &ImageSource{
 			Type:      "base64",
 			MediaType: mediaType,
 			Data:      base64.StdEncoding.EncodeToString(data),
 		},
-	}
+	})
 }
 
-func ToolResultBlock(toolUseID, content string, isError bool) ContentBlock {
-	return ContentBlock{Type: "tool_result", ToolUseID: toolUseID, Content: content, IsError: isError}
+func ToolResultBlock(toolUseID, content string, isError bool) json.RawMessage {
+	return blockJSON(ContentBlock{Type: "tool_result", ToolUseID: toolUseID, Content: content, IsError: isError})
 }
 
+// Message.Content holds raw content blocks rather than a typed slice so
+// blocks this app doesn't originate (an assistant turn's thinking/tool_use
+// blocks, anything Anthropic adds in the future) round-trip byte-for-byte
+// when replayed back into the conversation on the next round.
 type Message struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
+	Role    string            `json:"role"`
+	Content []json.RawMessage `json:"content"`
 }
 
-func UserMessage(blocks ...ContentBlock) Message {
+func UserMessage(blocks ...json.RawMessage) Message {
 	return Message{Role: RoleUser, Content: blocks}
 }
 
@@ -126,12 +140,33 @@ type Request struct {
 }
 
 type Response struct {
-	ID         string         `json:"id"`
-	Role       string         `json:"role"`
-	Content    []ContentBlock `json:"content"`
-	Model      string         `json:"model"`
-	StopReason string         `json:"stop_reason"`
-	Error      *apiError      `json:"error,omitempty"`
+	ID         string            `json:"id"`
+	Role       string            `json:"role"`
+	Content    []json.RawMessage `json:"content"`
+	Model      string            `json:"model"`
+	StopReason string            `json:"stop_reason"`
+	Error      *apiError         `json:"error,omitempty"`
+}
+
+// blockMeta reads the discriminant fields common to tool_use blocks (and
+// harmlessly ignores them on other block types) without needing a full typed
+// model of every possible block shape.
+type blockMeta struct {
+	Type  string          `json:"type"`
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+}
+
+func decodeBlocks(raws []json.RawMessage) []blockMeta {
+	out := make([]blockMeta, 0, len(raws))
+	for _, r := range raws {
+		var b blockMeta
+		if err := json.Unmarshal(r, &b); err == nil {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 type apiError struct {

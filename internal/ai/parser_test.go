@@ -48,12 +48,45 @@ func (f *fakeOFF) Lookup(ctx context.Context, barcode string) (*nutrition.Produc
 	return &nutrition.Product{Name: "test product"}, nil
 }
 
-func toolUseBlock(id, name string, input any) ContentBlock {
+func toolUseBlock(id, name string, input any) json.RawMessage {
 	body, err := json.Marshal(input)
 	if err != nil {
 		panic(err)
 	}
-	return ContentBlock{Type: "tool_use", ID: id, Name: name, Input: body}
+	raw, err := json.Marshal(struct {
+		Type  string          `json:"type"`
+		ID    string          `json:"id"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}{"tool_use", id, name, body})
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
+
+// thinkingBlock simulates an extended-thinking block the way Claude actually
+// sends one: fields (thinking, signature) this app doesn't model at all.
+// blockText distinguishes one fixture from another in assertions.
+func thinkingBlock(blockText string) json.RawMessage {
+	raw, err := json.Marshal(map[string]string{
+		"type": "thinking", "thinking": blockText, "signature": "sig-" + blockText,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
+
+func decodeBlockType(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var v struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("decode block type: %v", err)
+	}
+	return v.Type
 }
 
 func validItem(overrides func(*food.MealItem)) food.MealItem {
@@ -74,11 +107,11 @@ func TestParserToolLoopMechanics(t *testing.T) {
 	messenger := &fakeMessenger{responses: []*Response{
 		{
 			StopReason: "tool_use", Model: "claude-sonnet-5",
-			Content: []ContentBlock{toolUseBlock("t1", toolUSDASearch, map[string]any{"query": "egg", "page_size": 5})},
+			Content: []json.RawMessage{toolUseBlock("t1", toolUSDASearch, map[string]any{"query": "egg", "page_size": 5})},
 		},
 		{
 			StopReason: "tool_use", Model: "claude-sonnet-5",
-			Content: []ContentBlock{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
 				Items: []food.MealItem{validItem(nil)},
 				Notes: "assumed one large egg",
 			})},
@@ -118,8 +151,51 @@ func TestParserToolLoopMechanics(t *testing.T) {
 	// The second call should carry the tool_result from the first round.
 	secondCallMsgs := messenger.calls[1].Messages
 	last := secondCallMsgs[len(secondCallMsgs)-1]
-	if last.Role != RoleUser || len(last.Content) == 0 || last.Content[0].Type != "tool_result" {
+	if last.Role != RoleUser || len(last.Content) == 0 || decodeBlockType(t, last.Content[0]) != "tool_result" {
 		t.Errorf("expected the round-2 request to end with a tool_result message, got %+v", last)
+	}
+}
+
+// TestParserPreservesUnmodeledBlocks guards against the real bug this
+// exposed live: Claude returned a "thinking" block this app has no typed
+// field for. Round-tripping it through a lossy struct dropped the
+// thinking/signature fields, and Anthropic's API rejected the mangled block
+// on the next round ("messages.1.content.0.thinking.thinking: Field
+// required"). Content must be kept as raw JSON end-to-end so blocks this app
+// doesn't model survive being echoed back unchanged.
+func TestParserPreservesUnmodeledBlocks(t *testing.T) {
+	think := thinkingBlock("reasoning about the egg")
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{
+				think,
+				toolUseBlock("t1", toolUSDASearch, map[string]any{"query": "egg"}),
+			},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(nil)},
+				Notes: "assumed one large egg",
+			})},
+		},
+	}}
+
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
+	if _, err := p.ParseText(context.Background(), "an egg", "2026-07-07"); err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+
+	secondCallMsgs := messenger.calls[1].Messages
+	// messages[0] = original user text, [1] = assistant turn from round 1
+	// (thinking block + tool_use), [2] = our tool_result reply.
+	assistantTurn := secondCallMsgs[1]
+	if assistantTurn.Role != RoleAssistant || len(assistantTurn.Content) == 0 {
+		t.Fatalf("expected the replayed assistant turn, got %+v", assistantTurn)
+	}
+	if string(assistantTurn.Content[0]) != string(think) {
+		t.Errorf("thinking block was not preserved byte-for-byte:\ngot:  %s\nwant: %s", assistantTurn.Content[0], think)
 	}
 }
 
@@ -128,12 +204,12 @@ func TestParserRoundCapForcesRecordMeal(t *testing.T) {
 	for i := 0; i < maxToolRounds; i++ {
 		responses = append(responses, &Response{
 			StopReason: "tool_use", Model: "claude-sonnet-5",
-			Content: []ContentBlock{toolUseBlock(fmt.Sprintf("t%d", i), toolUSDASearch, map[string]any{"query": "mystery food"})},
+			Content: []json.RawMessage{toolUseBlock(fmt.Sprintf("t%d", i), toolUSDASearch, map[string]any{"query": "mystery food"})},
 		})
 	}
 	responses = append(responses, &Response{
 		StopReason: "tool_use", Model: "claude-sonnet-5",
-		Content: []ContentBlock{toolUseBlock("final", toolRecordMeal, recordMealInput{
+		Content: []json.RawMessage{toolUseBlock("final", toolRecordMeal, recordMealInput{
 			Items: []food.MealItem{validItem(func(it *food.MealItem) { it.Source = food.SourceAI; it.Confidence = food.ConfidenceLow })},
 			Notes: "forced after exhausting lookups",
 		})},
@@ -175,7 +251,7 @@ func TestParserValidationWiring(t *testing.T) {
 	messenger := &fakeMessenger{responses: []*Response{
 		{
 			StopReason: "tool_use", Model: "claude-sonnet-5",
-			Content: []ContentBlock{toolUseBlock("t1", toolRecordMeal, recordMealInput{
+			Content: []json.RawMessage{toolUseBlock("t1", toolRecordMeal, recordMealInput{
 				Items: []food.MealItem{badItem},
 				Notes: "straightforward parse",
 			})},

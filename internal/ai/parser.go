@@ -95,8 +95,8 @@ type recordMealInput struct {
 	Notes string          `json:"notes"`
 }
 
-func extractRecordMeal(content []ContentBlock) (*recordMealInput, bool) {
-	for _, b := range content {
+func extractRecordMeal(content []json.RawMessage) (*recordMealInput, bool) {
+	for _, b := range decodeBlocks(content) {
 		if b.Type != "tool_use" || b.Name != toolRecordMeal {
 			continue
 		}
@@ -112,8 +112,8 @@ func extractRecordMeal(content []ContentBlock) (*recordMealInput, bool) {
 // executeTools runs every tool_use block in content and returns the matching
 // tool_result blocks, in order. calledAny is false when content had no tool
 // calls at all (the model just talked).
-func (p *Parser) executeTools(ctx context.Context, content []ContentBlock) (results []ContentBlock, calledAny bool) {
-	for _, b := range content {
+func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage) (results []json.RawMessage, calledAny bool) {
+	for _, b := range decodeBlocks(content) {
 		if b.Type != "tool_use" {
 			continue
 		}
@@ -123,7 +123,7 @@ func (p *Parser) executeTools(ctx context.Context, content []ContentBlock) (resu
 	return results, calledAny
 }
 
-func (p *Parser) executeTool(ctx context.Context, block ContentBlock) ContentBlock {
+func (p *Parser) executeTool(ctx context.Context, block blockMeta) json.RawMessage {
 	switch block.Name {
 	case toolUSDASearch:
 		return p.execUSDASearch(ctx, block)
@@ -134,7 +134,7 @@ func (p *Parser) executeTool(ctx context.Context, block ContentBlock) ContentBlo
 	}
 }
 
-func (p *Parser) execUSDASearch(ctx context.Context, block ContentBlock) ContentBlock {
+func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta) json.RawMessage {
 	var in struct {
 		Query    string `json:"query"`
 		PageSize int    `json:"page_size"`
@@ -158,7 +158,7 @@ func (p *Parser) execUSDASearch(ctx context.Context, block ContentBlock) Content
 	return ToolResultBlock(block.ID, string(body), false)
 }
 
-func (p *Parser) execOFFBarcode(ctx context.Context, block ContentBlock) ContentBlock {
+func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta) json.RawMessage {
 	var in struct {
 		Code string `json:"code"`
 	}
