@@ -64,10 +64,12 @@ func ServePWA(r *chi.Mux, dir string) {
 		http.ServeFile(w, req, filepath.Join(dir, "index.html"))
 	})
 	r.Get("/manifest.json", func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, req, filepath.Join(dir, "manifest.json"))
 	})
 	r.Get("/sw.js", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, req, filepath.Join(dir, "sw.js"))
 	})
 }

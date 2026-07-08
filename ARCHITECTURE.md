@@ -287,8 +287,9 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   averages count only completed days.
 - **Settings.** Calorie target, protein target (entered in grams, stored mg),
   goal weight (entered lb, stored grams), export-JSON download link, build/version.
-- PWA installability: `manifest.json`, minimal `sw.js` (cache-first for the
-  shell, network for API), apple-touch-icon. API key stored in
+- PWA installability: `manifest.json`, minimal `sw.js` (network-first for the
+  shell with cache fallback for offline — deploys show on the next reload with
+  no version bump; network-only for API), apple-touch-icon. API key stored in
   `localStorage` with a first-run prompt, same as journal.
 
 ## Environment
