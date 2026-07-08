@@ -1,0 +1,16 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "food-server",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/server"],
+      "port": 8082,
+      "env": {
+        "DATABASE_URL": "postgres://localhost:5432/food_smoke?sslmode=disable",
+        "FOOD_API_KEY": "testkey123",
+        "FDC_API_KEY": "DEMO_KEY"
+      }
+    }
+  ]
+}
