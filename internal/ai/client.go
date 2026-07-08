@@ -133,10 +133,32 @@ type ToolChoice struct {
 type Request struct {
 	Model      string      `json:"model"`
 	MaxTokens  int         `json:"max_tokens"`
-	System     string      `json:"system,omitempty"`
+	System     any         `json:"system,omitempty"` // string, or []map (see CachedSystem)
 	Messages   []Message   `json:"messages"`
 	Tools      []Tool      `json:"tools,omitempty"`
 	ToolChoice *ToolChoice `json:"tool_choice,omitempty"`
+}
+
+// CachedSystem wraps a system prompt in a content-block array carrying an
+// ephemeral cache_control marker. The cache prefix covers tools + system, so
+// the large static prompt (diet framework included) is read from cache on
+// every round after the first, and on back-to-back parses within the cache's
+// 5-minute TTL.
+func CachedSystem(text string) []map[string]any {
+	return []map[string]any{{
+		"type":          "text",
+		"text":          text,
+		"cache_control": map[string]string{"type": "ephemeral"},
+	}}
+}
+
+// Usage is the token accounting Anthropic returns per call; logged by the
+// parser so slow parses can be diagnosed from server logs.
+type Usage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
 type Response struct {
@@ -145,6 +167,7 @@ type Response struct {
 	Content    []json.RawMessage `json:"content"`
 	Model      string            `json:"model"`
 	StopReason string            `json:"stop_reason"`
+	Usage      Usage             `json:"usage"`
 	Error      *apiError         `json:"error,omitempty"`
 }
 

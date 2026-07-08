@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jimgcampbell/food/docs"
 	"github.com/jimgcampbell/food/internal/food"
@@ -65,18 +66,22 @@ func (p *Parser) ParseImage(ctx context.Context, imageData []byte, mediaType, hi
 // Parse runs the tool loop starting from a prepared first user message --
 // text today, a vision message (image + hint) in phase 4.
 func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.ParseResult, error) {
-	system := p.systemPrompt(day)
+	system := CachedSystem(p.systemPrompt(day))
 	messages := []Message{first}
 	cache := microsCache{}
+	start := time.Now()
 
 	for round := 0; round < maxToolRounds; round++ {
+		t0 := time.Now()
 		resp, err := p.client.CreateMessage(ctx, Request{System: system, Messages: messages, Tools: tools()})
 		if err != nil {
 			return nil, fmt.Errorf("ai parse round %d: %w", round+1, err)
 		}
+		p.logRound(round+1, t0, resp)
 		messages = append(messages, Message{Role: RoleAssistant, Content: resp.Content})
 
 		if in, ok := extractRecordMeal(resp.Content); ok {
+			p.log.Info("parse done", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
 			return p.finish(in, resp.Model, messages, cache)
 		}
 
@@ -91,6 +96,7 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.Pa
 
 	messages = append(messages, UserMessage(TextBlock(
 		"You've used all available lookup rounds. Call record_meal now with your best assessment given everything so far -- estimate anything still uncertain.")))
+	t0 := time.Now()
 	resp, err := p.client.CreateMessage(ctx, Request{
 		System:     system,
 		Messages:   messages,
@@ -100,13 +106,29 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.Pa
 	if err != nil {
 		return nil, fmt.Errorf("ai parse forced record_meal: %w", err)
 	}
+	p.logRound(maxToolRounds+1, t0, resp)
 	messages = append(messages, Message{Role: RoleAssistant, Content: resp.Content})
 
 	in, ok := extractRecordMeal(resp.Content)
 	if !ok {
 		return nil, fmt.Errorf("ai did not return a meal record")
 	}
+	p.log.Info("parse done (forced)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
 	return p.finish(in, resp.Model, messages, cache)
+}
+
+// logRound records one model call's latency and token accounting; a slow
+// parse can be broken down from these lines alone (model time vs tool time,
+// cache hits vs cold prompt reads).
+func (p *Parser) logRound(round int, started time.Time, resp *Response) {
+	p.log.Info("parse round",
+		"round", round,
+		"dur_ms", time.Since(started).Milliseconds(),
+		"stop", resp.StopReason,
+		"input_tokens", resp.Usage.InputTokens,
+		"cache_read", resp.Usage.CacheReadInputTokens,
+		"cache_write", resp.Usage.CacheCreationInputTokens,
+		"output_tokens", resp.Usage.OutputTokens)
 }
 
 type recordMealInput struct {
@@ -162,11 +184,13 @@ func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache micr
 		return ToolResultBlock(block.ID, fmt.Sprintf("invalid usda_search input: %v", err), true)
 	}
 
+	t0 := time.Now()
 	results, err := p.usda.Search(ctx, in.Query, in.PageSize)
 	if err != nil {
-		p.log.Warn("usda_search failed", "query", in.Query, "error", err)
+		p.log.Warn("usda_search failed", "query", in.Query, "dur_ms", time.Since(t0).Milliseconds(), "error", err)
 		return ToolResultBlock(block.ID, fmt.Sprintf("usda_search failed: %v -- estimate this item instead.", err), true)
 	}
+	p.log.Info("usda_search", "query", in.Query, "results", len(results), "dur_ms", time.Since(t0).Milliseconds())
 	if len(results) == 0 {
 		return ToolResultBlock(block.ID, "no USDA results found -- estimate this item instead.", false)
 	}
@@ -202,11 +226,13 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache micr
 		return ToolResultBlock(block.ID, fmt.Sprintf("invalid off_barcode input: %v", err), true)
 	}
 
+	t0 := time.Now()
 	product, err := p.off.Lookup(ctx, in.Code)
 	if err != nil {
-		p.log.Warn("off_barcode lookup failed", "code", in.Code, "error", err)
+		p.log.Warn("off_barcode lookup failed", "code", in.Code, "dur_ms", time.Since(t0).Milliseconds(), "error", err)
 		return ToolResultBlock(block.ID, fmt.Sprintf("off_barcode failed: %v -- estimate this item instead.", err), true)
 	}
+	p.log.Info("off_barcode", "code", in.Code, "dur_ms", time.Since(t0).Milliseconds())
 	if len(product.RawNutriments) > 0 {
 		cache[food.SourceOFF+":"+in.Code] = product.RawNutriments
 	}
@@ -292,6 +318,7 @@ UNITS -- integers only, never floats, in every numeric field you return
 TOOLS AND ESTIMATION
 - Prefer usda_search for whole foods and common dishes (e.g. "grilled chicken breast", "banana", "brown rice"). Prefer Foundation/SR Legacy results over Branded when both are plausible matches.
 - Batch your lookups: issue every usda_search call (one per item) together in a single response. A typical parse is two turns total -- one batched lookup turn, then record_meal. Only take an extra turn when a first search came back empty or clearly wrong.
+- Don't over-search: at most one usda_search per item, plus at most one reworded retry for the whole meal. For branded packaged products (protein powders, bars, cereals), if the first search has no confident match, estimate from your knowledge of that product's label rather than searching again -- speed matters more than a third search.
 - Use off_barcode when barcode digits are visible in a photo or given directly.
 - Estimate from your own knowledge only when a lookup fails, returns nothing useful, or the food is a composite homemade dish that no database entry represents well (e.g. "chicken stir fry with vegetables"). In that case set source to "ai" and use confidence "medium" or "low" as appropriate.
 - For a photographed nutrition label, read the numbers directly off the label and set source to "label".
