@@ -166,11 +166,22 @@ type ParseResult struct {
 	AIRaw   json.RawMessage `json:"ai_raw,omitempty"`
 }
 
+// Favorite is a reusable meal template: a named snapshot of items that can
+// be re-logged with one tap. Items are a snapshot, not references — editing
+// or deleting the original meal never mutates a favorite.
+type Favorite struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	Items     []MealItem `json:"items"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
 // ExportDoc is the full-database backup returned by GET /api/export — the
 // backup story for Render's ephemeral disk. Meals are ordered by day.
 type ExportDoc struct {
-	ExportedAt time.Time `json:"exported_at"`
-	Settings   Settings  `json:"settings"`
-	Weights    []Weight  `json:"weights"`
-	Meals      []Meal    `json:"meals"`
+	ExportedAt time.Time  `json:"exported_at"`
+	Settings   Settings   `json:"settings"`
+	Weights    []Weight   `json:"weights"`
+	Meals      []Meal     `json:"meals"`
+	Favorites  []Favorite `json:"favorites"`
 }

@@ -162,6 +162,19 @@ CREATE TABLE settings (                            -- single row, id=1
 INSERT INTO settings (id) VALUES (1);
 ```
 
+Migration 002 adds **favorites** — reusable meal templates. Items are a JSONB
+snapshot (same shape as `meal_items`), not references, so editing or deleting
+the original meal never mutates a favorite:
+
+```sql
+CREATE TABLE favorites (
+    id         BIGSERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    items      JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
 ## API
 
 All under `/api`, bearer-key auth (`Authorization: Bearer $FOOD_API_KEY`)
@@ -192,10 +205,14 @@ POST   /api/weights         {day, weight_g, note}             → upsert by day
 GET    /api/weights?start=&end=                               → [{day, weight_g, note}]
 DELETE /api/weights/{day}
 
+POST   /api/favorites       {name, items:[Item]}               → Favorite (named meal template)
+GET    /api/favorites                                          → [Favorite], ordered by name
+DELETE /api/favorites/{id}
+
 GET    /api/settings
 PUT    /api/settings        {calorie_target, protein_target_mg, weight_target_g}
 
-GET    /api/export          → full-DB JSON download (meals+items+weights+settings)
+GET    /api/export          → full-DB JSON download (meals+items+weights+favorites+settings)
 ```
 
 `ParseResult`:
@@ -272,9 +289,9 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   (progress toward target), quality score badge. Below: the day's meals
   grouped by slot, each row tappable to edit. Bottom: an always-visible
   log bar — text input, 🎤 mic button (Web Speech API, copy journal's
-  `webkitSpeechRecognition` usage), 📷 camera button (`<input type=file
-  accept=image/* capture=environment>`), ⚖️ weight quick-entry.
-  Day switcher (‹ today ›) to log to yesterday.
+  `webkitSpeechRecognition` usage), 📷 camera button (file input without a
+  `capture` attribute so iOS offers Photo Library / Take Photo), ⭐ favorites,
+  ⚖️ weight quick-entry. Day switcher (‹ today ›) to log to yesterday.
 - **Log flow.** Input → spinner → **draft preview card** in the dialog: item
   list with name, grams, calories, macros; per-item fraction chips
   (¼ ½ ¾ All) and a whole-meal fraction row; delete-item ✕; editable grams
@@ -282,6 +299,11 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   grams). Save → POST /api/meals → Today refreshes. Photos: client-side
   canvas downscale to ≤1600px JPEG before upload, then analyze with the hint
   text from the input box.
+- **Duplicate & favorites.** The edit dialog offers ⧉ Duplicate (opens a new
+  draft with the same items for the currently viewed day) and ☆ Favorite
+  (names the meal and saves it as a template). The log bar's ⭐ opens the
+  favorites list — tap one to open it as a pre-filled draft (adjust fraction
+  chips, Save), ✕ deletes a favorite.
 - **Trends.** Week and Month toggles: per-day bars of calories (colored
   against target) with score dots and protein line; weight line chart with
   optional goal line; simple inline SVG, no chart library. Month grid follows

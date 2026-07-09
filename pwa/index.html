@@ -393,6 +393,7 @@ function buildLogBar() {
   el.innerHTML = `
     <input type="text" id="logInput" placeholder="What did you eat?" onkeydown="if(event.key==='Enter')submitText()">
     ${micBtn}${camBtn}
+    <button class="iconbtn" onclick="openFavorites()" title="Favorites">⭐</button>
     <button class="iconbtn" onclick="weightDialog()" title="Log weight">⚖️</button>
     <button class="iconbtn primary" onclick="submitText()" title="Log">➤</button>
     <!-- no capture attribute: iOS then offers its native Photo Library / Take Photo sheet -->
@@ -469,6 +470,59 @@ async function saveWeight() {
     await api('/weights', { method: 'POST', body: { day: S.day, weight_g, note } });
     closeDialog(); toast('Weight saved');
     S.trendRows = null; S.trendWeights = null;
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+// ---------- favorites ----------
+async function openFavorites() {
+  openDialog('<h2>Favorites</h2><div class="spinner"></div>');
+  try {
+    if (!S.favorites) S.favorites = await api('/favorites');
+  } catch (e) {
+    openDialog(`<h2>Favorites</h2><div class="empty">${esc(e.message)}</div>
+      <div class="dlg-actions"><button class="btn" onclick="closeDialog()">Close</button></div>`);
+    return;
+  }
+  renderFavorites();
+}
+function favTotals(items) {
+  return items.reduce((t, it) => {
+    const f = it.fraction_pct / 100;
+    t.cal += Math.round(it.calories * f);
+    t.p += Math.round(it.protein_mg * f / 1000);
+    return t;
+  }, { cal: 0, p: 0 });
+}
+function renderFavorites() {
+  const rows = S.favorites.map(f => {
+    const t = favTotals(f.items);
+    return `<div class="row" onclick="logFavorite(${f.id})">
+      <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${t.cal} cal · ${t.p} g protein</div></div>
+      <button class="lk" onclick="event.stopPropagation();removeFavorite(${f.id})" title="Delete favorite">✕</button>
+    </div>`;
+  }).join('');
+  openDialog(`<h2>Favorites</h2>
+    ${rows || '<div class="empty">No favorites yet — open a meal and tap ☆ Favorite.</div>'}
+    <div class="dlg-actions"><button class="btn" onclick="closeDialog()">Close</button></div>`);
+}
+function logFavorite(id) {
+  const f = S.favorites.find(x => x.id === id);
+  if (!f) return;
+  DRAFT = {
+    mode: 'new', id: null, day: S.day, slot: slotDefault(),
+    description: f.name, input_kind: 'manual',
+    photo_key: null, photo_url: null, ai_model: null, ai_raw: null,
+    notes: '', notesShown: false,
+    items: f.items.map(({ id, meal_id, ...rest }) => ({ ...rest })),
+  };
+  renderDraftDialog();
+}
+async function removeFavorite(id) {
+  if (!confirm('Delete this favorite?')) return;
+  try {
+    await api('/favorites/' + id, { method: 'DELETE' });
+    S.favorites = S.favorites.filter(x => x.id !== id);
+    renderFavorites();
   } catch (e) { toast('Error: ' + e.message); }
 }
 
@@ -572,6 +626,10 @@ function draftDialogHTML() {
       ${['breakfast', 'lunch', 'dinner', 'snack'].map(sl => `<button class="${DRAFT.slot === sl ? 'on' : ''}" onclick="DRAFT.slot='${sl}';renderDraftDialog()">${cap(sl)}</button>`).join('')}
     </div>
     ${DRAFT.mode === 'edit' ? `<label class="f">Day</label><input type="date" value="${DRAFT.day}" max="${today()}" onchange="DRAFT.day=this.value">` : ''}
+    ${DRAFT.mode === 'edit' ? `<div class="dlg-actions" style="margin-top:12px">
+      <button class="btn" onclick="duplicateDraft()">⧉ Duplicate</button>
+      <button class="btn" onclick="saveFavorite()">☆ Favorite</button>
+    </div>` : ''}
     <div class="dfoot">
       <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein} g protein</div>
       <div class="dlg-actions">
@@ -580,6 +638,28 @@ function draftDialogHTML() {
         <button class="btn primary" onclick="saveDraft()">Save</button>
       </div>
     </div>`;
+}
+function duplicateDraft() {
+  DRAFT = {
+    mode: 'new', id: null, day: S.day, slot: slotDefault(),
+    description: DRAFT.description, input_kind: 'manual',
+    photo_key: null, photo_url: null, ai_model: null, ai_raw: null,
+    notes: '', notesShown: false,
+    items: DRAFT.items.map(({ id, meal_id, ...rest }) => ({ ...rest })),
+  };
+  renderDraftDialog();
+  toast('Duplicated — Save to log it');
+}
+async function saveFavorite() {
+  const def = (DRAFT.description || DRAFT.items.map(i => i.name).join(', ')).slice(0, 60);
+  const name = prompt('Favorite name:', def);
+  if (!name || !name.trim()) return;
+  try {
+    const items = DRAFT.items.map(({ id, meal_id, ...rest }) => ({ ...rest }));
+    await api('/favorites', { method: 'POST', body: { name: name.trim(), items } });
+    S.favorites = null;
+    toast('Saved to favorites ★');
+  } catch (e) { toast('Error: ' + e.message); }
 }
 async function saveDraft() {
   if (!DRAFT.items.length) { toast('Add at least one item'); return; }

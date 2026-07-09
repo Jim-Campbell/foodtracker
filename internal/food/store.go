@@ -15,6 +15,10 @@ type Store interface {
 	ListWeights(ctx context.Context, start, end string) ([]Weight, error)
 	DeleteWeight(ctx context.Context, day string) error
 
+	CreateFavorite(ctx context.Context, f *Favorite) error
+	ListFavorites(ctx context.Context) ([]Favorite, error)
+	DeleteFavorite(ctx context.Context, id int64) error
+
 	GetSettings(ctx context.Context) (*Settings, error)
 	UpdateSettings(ctx context.Context, s *Settings) error
 

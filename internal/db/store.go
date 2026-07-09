@@ -214,6 +214,56 @@ func (d *DB) DeleteMeal(ctx context.Context, id int64) error {
 	return nil
 }
 
+// ---- favorites ----
+
+func (d *DB) CreateFavorite(ctx context.Context, f *food.Favorite) error {
+	items, err := json.Marshal(f.Items)
+	if err != nil {
+		return fmt.Errorf("marshal favorite items: %w", err)
+	}
+	err = d.pool.QueryRow(ctx, `
+		INSERT INTO favorites (name, items) VALUES ($1, $2)
+		RETURNING id, created_at`, f.Name, items).
+		Scan(&f.ID, &f.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("insert favorite: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ListFavorites(ctx context.Context) ([]food.Favorite, error) {
+	rows, err := d.pool.Query(ctx, `SELECT id, name, items, created_at FROM favorites ORDER BY lower(name)`)
+	if err != nil {
+		return nil, fmt.Errorf("list favorites: %w", err)
+	}
+	defer rows.Close()
+
+	var favs []food.Favorite
+	for rows.Next() {
+		var f food.Favorite
+		var items []byte
+		if err := rows.Scan(&f.ID, &f.Name, &items, &f.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan favorite: %w", err)
+		}
+		if err := json.Unmarshal(items, &f.Items); err != nil {
+			return nil, fmt.Errorf("unmarshal favorite items: %w", err)
+		}
+		favs = append(favs, f)
+	}
+	return favs, rows.Err()
+}
+
+func (d *DB) DeleteFavorite(ctx context.Context, id int64) error {
+	ct, err := d.pool.Exec(ctx, "DELETE FROM favorites WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("delete favorite: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("not found: favorite")
+	}
+	return nil
+}
+
 // ---- weights ----
 
 func (d *DB) UpsertWeight(ctx context.Context, w *food.Weight) error {

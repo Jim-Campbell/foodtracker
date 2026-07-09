@@ -1,21 +1,54 @@
 package food
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var errNotFoundFavorite = errors.New("not found: favorite")
 
 // fakeStore is an in-memory food.Store for service-level tests.
 type fakeStore struct {
-	meals    map[int64]*Meal
-	nextID   int64
-	weights  map[string]Weight
-	settings Settings
+	meals     map[int64]*Meal
+	nextID    int64
+	weights   map[string]Weight
+	settings  Settings
+	favorites map[int64]*Favorite
+	nextFavID int64
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		meals:    map[int64]*Meal{},
-		weights:  map[string]Weight{},
-		settings: Settings{CalorieTarget: 1800, ProteinTargetMg: 165000},
+		meals:     map[int64]*Meal{},
+		weights:   map[string]Weight{},
+		settings:  Settings{CalorieTarget: 1800, ProteinTargetMg: 165000},
+		favorites: map[int64]*Favorite{},
 	}
+}
+
+func (f *fakeStore) CreateFavorite(ctx context.Context, fav *Favorite) error {
+	f.nextFavID++
+	fav.ID = f.nextFavID
+	cp := *fav
+	cp.Items = append([]MealItem{}, fav.Items...)
+	f.favorites[fav.ID] = &cp
+	return nil
+}
+
+func (f *fakeStore) ListFavorites(ctx context.Context) ([]Favorite, error) {
+	var out []Favorite
+	for _, fav := range f.favorites {
+		out = append(out, *fav)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DeleteFavorite(ctx context.Context, id int64) error {
+	if _, ok := f.favorites[id]; !ok {
+		return errNotFoundFavorite
+	}
+	delete(f.favorites, id)
+	return nil
 }
 
 func (f *fakeStore) CreateMeal(ctx context.Context, m *Meal) error {

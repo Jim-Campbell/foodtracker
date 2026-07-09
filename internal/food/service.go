@@ -148,6 +148,43 @@ func (s *Service) DeleteWeight(ctx context.Context, day string) error {
 	return s.store.DeleteWeight(ctx, day)
 }
 
+// ---- favorites ----
+
+func (s *Service) CreateFavorite(ctx context.Context, f *Favorite) error {
+	f.Name = strings.TrimSpace(f.Name)
+	if f.Name == "" {
+		return fmt.Errorf("invalid: favorite name is required")
+	}
+	if len(f.Items) == 0 {
+		return fmt.Errorf("invalid: favorite needs at least one item")
+	}
+	for i := range f.Items {
+		// A favorite is a template, not a row reference.
+		f.Items[i].ID = 0
+		f.Items[i].MealID = 0
+		if errs, _ := ValidateItem(f.Items[i]); len(errs) > 0 {
+			return fmt.Errorf("invalid: item %q: %s", f.Items[i].Name, strings.Join(errs, "; "))
+		}
+	}
+	return s.store.CreateFavorite(ctx, f)
+}
+
+func (s *Service) ListFavorites(ctx context.Context) ([]Favorite, error) {
+	favs, err := s.store.ListFavorites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if favs == nil {
+		favs = []Favorite{}
+	}
+	return favs, nil
+}
+
+func (s *Service) DeleteFavorite(ctx context.Context, id int64) error {
+	// The store reports a missing row as a "not found:" error itself.
+	return s.store.DeleteFavorite(ctx, id)
+}
+
 // ---- settings ----
 
 func (s *Service) GetSettings(ctx context.Context) (*Settings, error) {
@@ -233,10 +270,15 @@ func (s *Service) Export(ctx context.Context) (*ExportDoc, error) {
 	if meals == nil {
 		meals = []Meal{}
 	}
+	favorites, err := s.ListFavorites(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &ExportDoc{
 		ExportedAt: time.Now().UTC(),
 		Settings:   *settings,
 		Weights:    weights,
 		Meals:      meals,
+		Favorites:  favorites,
 	}, nil
 }
