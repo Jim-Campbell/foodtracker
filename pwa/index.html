@@ -364,7 +364,8 @@ function mealProtein(m) {
 }
 function mealRow(m) {
   const thumb = m.photo_url ? `<img class="thumb" src="${esc(m.photo_url)}">` : '';
-  return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}</div><div class="s">${mealCalories(m)} cal · ${mealProtein(m)} g protein</div></div></div>`;
+  const star = matchingFavorite(m.items) ? ' <span title="Favorited">★</span>' : '';
+  return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}${star}</div><div class="s">${mealCalories(m)} cal · ${mealProtein(m)} g protein</div></div></div>`;
 }
 function renderToday(m) {
   const s = S.summary;
@@ -557,6 +558,15 @@ function renderFavorites() {
     ${rows || '<div class="empty">No favorites yet — open a meal and tap ☆ Favorite.</div>'}
     <div class="dlg-actions"><button class="btn" onclick="closeDialog()">Close</button></div>`);
 }
+// A meal "is favorited" when a favorite with the same item content exists
+// (favorites are snapshots, not references, so match on the items).
+function itemsFingerprint(items) {
+  return JSON.stringify((items || []).map(i => [i.name, i.calories, i.fraction_pct]).sort());
+}
+function matchingFavorite(items) {
+  const fp = itemsFingerprint(items);
+  return (S.favorites || []).find(f => itemsFingerprint(f.items) === fp) || null;
+}
 function logFavorite(id) {
   const f = S.favorites.find(x => x.id === id);
   if (!f) return;
@@ -678,10 +688,15 @@ function draftDialogHTML() {
       ${['breakfast', 'lunch', 'dinner', 'snack'].map(sl => `<button class="${DRAFT.slot === sl ? 'on' : ''}" onclick="DRAFT.slot='${sl}';renderDraftDialog()">${cap(sl)}</button>`).join('')}
     </div>
     ${DRAFT.mode === 'edit' ? `<label class="f">Day</label><input type="date" value="${DRAFT.day}" max="${today()}" onchange="DRAFT.day=this.value">` : ''}
-    ${DRAFT.mode === 'edit' ? `<div class="dlg-actions" style="margin-top:12px">
+    ${DRAFT.mode === 'edit' ? (() => {
+      const fav = matchingFavorite(DRAFT.items);
+      return `<div class="dlg-actions" style="margin-top:12px">
       <button class="btn" onclick="duplicateDraft()">⧉ Duplicate</button>
-      <button class="btn" onclick="saveFavorite()">☆ Favorite</button>
-    </div>` : ''}
+      ${fav
+        ? `<button class="btn" style="background:var(--chip-on);color:#fff" onclick="unfavoriteFromDialog(${fav.id})">★ Favorited</button>`
+        : `<button class="btn" onclick="saveFavorite()">☆ Favorite</button>`}
+    </div>`;
+    })() : ''}
     <div class="dfoot">
       <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein} g protein</div>
       <div class="dlg-actions">
@@ -708,9 +723,19 @@ async function saveFavorite() {
   if (!name || !name.trim()) return;
   try {
     const items = DRAFT.items.map(({ id, meal_id, ...rest }) => ({ ...rest }));
-    await api('/favorites', { method: 'POST', body: { name: name.trim(), items } });
-    S.favorites = null;
+    const fav = await api('/favorites', { method: 'POST', body: { name: name.trim(), items } });
+    S.favorites = (S.favorites || []).filter(f => f.id !== fav.id).concat(fav)
+      .sort((a, b) => a.name.localeCompare(b.name));
     toast('Saved to favorites ★');
+    renderDraftDialog();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+async function unfavoriteFromDialog(id) {
+  try {
+    await api('/favorites/' + id, { method: 'DELETE' });
+    S.favorites = (S.favorites || []).filter(f => f.id !== id);
+    toast('Removed from favorites');
+    renderDraftDialog();
   } catch (e) { toast('Error: ' + e.message); }
 }
 async function saveDraft() {
@@ -889,8 +914,8 @@ async function boot() {
   buildLogBar();
   initSpeech();
   try {
-    const [summary, settings] = await Promise.all([api('/day/' + S.day), api('/settings')]);
-    S.summary = summary; S.settings = settings;
+    const [summary, settings, favorites] = await Promise.all([api('/day/' + S.day), api('/settings'), api('/favorites')]);
+    S.summary = summary; S.settings = settings; S.favorites = favorites;
   } catch (e) { if (e.message !== 'unauthorized') toast('Error: ' + e.message); }
   render();
 }

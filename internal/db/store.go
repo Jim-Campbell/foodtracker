@@ -221,12 +221,15 @@ func (d *DB) CreateFavorite(ctx context.Context, f *food.Favorite) error {
 	if err != nil {
 		return fmt.Errorf("marshal favorite items: %w", err)
 	}
+	// Upsert by case-insensitive name: re-favoriting replaces the template
+	// rather than piling up duplicates.
 	err = d.pool.QueryRow(ctx, `
 		INSERT INTO favorites (name, items) VALUES ($1, $2)
+		ON CONFLICT (lower(name)) DO UPDATE SET items = EXCLUDED.items
 		RETURNING id, created_at`, f.Name, items).
 		Scan(&f.ID, &f.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("insert favorite: %w", err)
+		return fmt.Errorf("upsert favorite: %w", err)
 	}
 	return nil
 }

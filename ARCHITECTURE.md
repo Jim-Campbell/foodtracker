@@ -164,7 +164,12 @@ INSERT INTO settings (id) VALUES (1);
 
 Migration 002 adds **favorites** — reusable meal templates. Items are a JSONB
 snapshot (same shape as `meal_items`), not references, so editing or deleting
-the original meal never mutates a favorite:
+the original meal never mutates a favorite. Migration 003 makes names unique
+(case-insensitive); `POST /api/favorites` upserts by name, so re-favoriting
+replaces the template instead of duplicating it. The PWA decides whether a
+meal "is favorited" by matching item content (name/calories/fraction
+fingerprint) against the favorites list, shows ★ on matching meal rows, and
+renders the edit-dialog button as a ★ Favorited toggle (tap to unfavorite):
 
 ```sql
 CREATE TABLE favorites (
