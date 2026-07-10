@@ -702,7 +702,8 @@ function draftDialogHTML() {
     <div class="seg">
       ${['breakfast', 'lunch', 'dinner', 'snack'].map(sl => `<button class="${DRAFT.slot === sl ? 'on' : ''}" onclick="DRAFT.slot='${sl}';renderDraftDialog()">${cap(sl)}</button>`).join('')}
     </div>
-    ${DRAFT.mode === 'edit' ? `<label class="f">Day</label><input type="date" value="${DRAFT.day}" max="${today()}" onchange="DRAFT.day=this.value">` : ''}
+    <label class="f">Day</label>
+    <input type="date" value="${DRAFT.day}" max="${today()}" onchange="DRAFT.day=this.value">
     ${DRAFT.mode === 'edit' ? (() => {
       const fav = matchingFavorite(DRAFT.items);
       return `<div class="dlg-actions" style="margin-top:12px">
@@ -765,6 +766,7 @@ async function saveDraft() {
     else await api('/meals', { method: 'POST', body });
     closeDialog(); toast('Saved'); DRAFT = null;
     S.trendRows = null;
+    S.day = body.day; // follow the meal: an entry assigned to another day shows up there
     await loadDay(S.day); render();
   } catch (e) { toast('Error: ' + e.message); }
 }
