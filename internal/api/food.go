@@ -41,6 +41,7 @@ func (h *Handler) Routes(r chi.Router) {
 
 	r.Post("/favorites", h.createFavorite)
 	r.Get("/favorites", h.listFavorites)
+	r.Put("/favorites/{id}", h.renameFavorite)
 	r.Delete("/favorites/{id}", h.deleteFavorite)
 
 	r.Get("/settings", h.getSettings)
@@ -162,6 +163,26 @@ func (h *Handler) listFavorites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, favs)
+}
+
+func (h *Handler) renameFavorite(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid favorite id")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := h.svc.RenameFavorite(r.Context(), id, body.Name); err != nil {
+		h.fail(w, "rename favorite", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) deleteFavorite(w http.ResponseWriter, r *http.Request) {

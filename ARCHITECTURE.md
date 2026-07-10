@@ -210,8 +210,9 @@ POST   /api/weights         {day, weight_g, note}             → upsert by day
 GET    /api/weights?start=&end=                               → [{day, weight_g, note}]
 DELETE /api/weights/{day}
 
-POST   /api/favorites       {name, items:[Item]}               → Favorite (named meal template)
+POST   /api/favorites       {name, items:[Item]}               → Favorite (named meal template; upserts by name)
 GET    /api/favorites                                          → [Favorite], ordered by name
+PUT    /api/favorites/{id}  {name}                             → 204 (rename; 400 if the name is taken)
 DELETE /api/favorites/{id}
 
 GET    /api/settings

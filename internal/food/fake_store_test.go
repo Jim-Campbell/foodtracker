@@ -43,6 +43,15 @@ func (f *fakeStore) ListFavorites(ctx context.Context) ([]Favorite, error) {
 	return out, nil
 }
 
+func (f *fakeStore) RenameFavorite(ctx context.Context, id int64, name string) error {
+	fav, ok := f.favorites[id]
+	if !ok {
+		return errNotFoundFavorite
+	}
+	fav.Name = name
+	return nil
+}
+
 func (f *fakeStore) DeleteFavorite(ctx context.Context, id int64) error {
 	if _, ok := f.favorites[id]; !ok {
 		return errNotFoundFavorite

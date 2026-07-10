@@ -17,6 +17,7 @@ type Store interface {
 
 	CreateFavorite(ctx context.Context, f *Favorite) error
 	ListFavorites(ctx context.Context) ([]Favorite, error)
+	RenameFavorite(ctx context.Context, id int64, name string) error
 	DeleteFavorite(ctx context.Context, id int64) error
 
 	GetSettings(ctx context.Context) (*Settings, error)

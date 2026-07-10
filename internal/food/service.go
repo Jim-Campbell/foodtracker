@@ -180,6 +180,15 @@ func (s *Service) ListFavorites(ctx context.Context) ([]Favorite, error) {
 	return favs, nil
 }
 
+func (s *Service) RenameFavorite(ctx context.Context, id int64, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("invalid: favorite name is required")
+	}
+	// The store reports a missing row / duplicate name itself.
+	return s.store.RenameFavorite(ctx, id, name)
+}
+
 func (s *Service) DeleteFavorite(ctx context.Context, id int64) error {
 	// The store reports a missing row as a "not found:" error itself.
 	return s.store.DeleteFavorite(ctx, id)

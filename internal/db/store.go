@@ -3,10 +3,12 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/jimgcampbell/food/internal/food"
 )
@@ -254,6 +256,21 @@ func (d *DB) ListFavorites(ctx context.Context) ([]food.Favorite, error) {
 		favs = append(favs, f)
 	}
 	return favs, rows.Err()
+}
+
+func (d *DB) RenameFavorite(ctx context.Context, id int64, name string) error {
+	ct, err := d.pool.Exec(ctx, "UPDATE favorites SET name = $2 WHERE id = $1", id, name)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation on lower(name)
+			return fmt.Errorf("invalid: a favorite named %q already exists", name)
+		}
+		return fmt.Errorf("rename favorite: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("not found: favorite")
+	}
+	return nil
 }
 
 func (d *DB) DeleteFavorite(ctx context.Context, id int64) error {

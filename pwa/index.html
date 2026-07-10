@@ -551,6 +551,7 @@ function renderFavorites() {
     const t = favTotals(f.items);
     return `<div class="row" onclick="logFavorite(${f.id})">
       <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${t.cal} cal · ${t.p} g protein</div></div>
+      <button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();renameFavorite(${f.id})" title="Rename favorite">✏️</button>
       <button class="lk" onclick="event.stopPropagation();removeFavorite(${f.id})" title="Delete favorite">✕</button>
     </div>`;
   }).join('');
@@ -578,6 +579,18 @@ function logFavorite(id) {
     items: f.items.map(({ id, meal_id, ...rest }) => ({ ...rest })),
   };
   renderDraftDialog();
+}
+async function renameFavorite(id) {
+  const f = (S.favorites || []).find(x => x.id === id);
+  if (!f) return;
+  const name = prompt('Favorite name:', f.name);
+  if (!name || !name.trim() || name.trim() === f.name) return;
+  try {
+    await api('/favorites/' + id, { method: 'PUT', body: { name: name.trim() } });
+    f.name = name.trim();
+    S.favorites.sort((a, b) => a.name.localeCompare(b.name));
+    renderFavorites();
+  } catch (e) { toast('Error: ' + e.message); }
 }
 async function removeFavorite(id) {
   if (!confirm('Delete this favorite?')) return;
