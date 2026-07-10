@@ -42,10 +42,15 @@ type Parser struct {
 	usda   USDASearcher
 	off    BarcodeLookuper
 	log    *slog.Logger
+	// visionModel overrides the client's default model for photo parses.
+	// Vision work (reading barcode digits, nutrition panels) is where model
+	// capability shows -- a fast model that misreads a barcode logs the wrong
+	// food entirely. Empty means use the client default.
+	visionModel string
 }
 
-func NewParser(client Messenger, usda USDASearcher, off BarcodeLookuper, log *slog.Logger) *Parser {
-	return &Parser{client: client, usda: usda, off: off, log: log}
+func NewParser(client Messenger, usda USDASearcher, off BarcodeLookuper, visionModel string, log *slog.Logger) *Parser {
+	return &Parser{client: client, usda: usda, off: off, visionModel: visionModel, log: log}
 }
 
 // Progress receives short user-facing status lines ("Looking up “feta
@@ -56,7 +61,7 @@ type Progress func(msg string)
 
 // ParseText parses a casual text description of a meal.
 func (p *Parser) ParseText(ctx context.Context, text, day string, progress func(string)) (*food.ParseResult, error) {
-	return p.Parse(ctx, UserMessage(TextBlock(text)), day, progress)
+	return p.parse(ctx, UserMessage(TextBlock(text)), day, "", progress)
 }
 
 // ParseImage parses a photo (label, barcode, package, or plate) plus an
@@ -66,12 +71,13 @@ func (p *Parser) ParseImage(ctx context.Context, imageData []byte, mediaType, hi
 	if hint != "" {
 		hintText = "Hint from Jim: " + hint
 	}
-	return p.Parse(ctx, UserMessage(ImageBlock(mediaType, imageData), TextBlock(hintText)), day, progress)
+	return p.parse(ctx, UserMessage(ImageBlock(mediaType, imageData), TextBlock(hintText)), day, p.visionModel, progress)
 }
 
-// Parse runs the tool loop starting from a prepared first user message --
-// plain text, or a vision message (image + hint).
-func (p *Parser) Parse(ctx context.Context, first Message, day string, progress func(string)) (*food.ParseResult, error) {
+// parse runs the tool loop starting from a prepared first user message --
+// plain text, or a vision message (image + hint). model overrides the client
+// default when non-empty.
+func (p *Parser) parse(ctx context.Context, first Message, day, model string, progress func(string)) (*food.ParseResult, error) {
 	emit := func(msg string) {
 		if progress != nil {
 			progress(msg)
@@ -84,7 +90,7 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string, progress 
 
 	for round := 0; round < maxToolRounds; round++ {
 		t0 := time.Now()
-		resp, err := p.client.CreateMessage(ctx, Request{System: system, Messages: messages, Tools: tools()})
+		resp, err := p.client.CreateMessage(ctx, Request{Model: model, System: system, Messages: messages, Tools: tools()})
 		if err != nil {
 			return nil, fmt.Errorf("ai parse round %d: %w", round+1, err)
 		}
@@ -110,6 +116,7 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string, progress 
 		"You've used all available lookup rounds. Call record_meal now with your best assessment given everything so far -- estimate anything still uncertain.")))
 	t0 := time.Now()
 	resp, err := p.client.CreateMessage(ctx, Request{
+		Model:      model,
 		System:     system,
 		Messages:   messages,
 		Tools:      []Tool{{Name: toolRecordMeal, Description: "Submit the final parsed meal.", InputSchema: recordMealSchema}},
@@ -275,7 +282,9 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache micr
 	product, err := p.off.Lookup(ctx, in.Code)
 	if err != nil {
 		p.log.Warn("off_barcode lookup failed", "code", in.Code, "dur_ms", time.Since(t0).Milliseconds(), "error", err)
-		return ToolResultBlock(block.ID, fmt.Sprintf("off_barcode failed: %v -- estimate this item instead.", err), true)
+		return ToolResultBlock(block.ID, fmt.Sprintf(
+			"off_barcode found nothing for %q: %v -- barcode digits are easy to misread. Re-read the printed numerals under the bars digit by digit (UPC-A has 12) and try off_barcode ONCE more if you read them differently. If it still fails, identify the product from the package's printed TEXT (brand name, product name, website) -- never from the food artwork on the label.",
+			in.Code, err), true)
 	}
 	p.log.Info("off_barcode", "code", in.Code, "dur_ms", time.Since(t0).Milliseconds())
 	if len(product.RawNutriments) > 0 {
@@ -372,6 +381,8 @@ PORTIONS
 - A hint like "I had half of this" or "just the salmon" sets fraction_pct on the affected item(s) (e.g. 50) -- it does NOT mean you should pre-scale calories/macros. Always report FULL-PORTION nutrition values and let fraction_pct carry the eaten fraction.
 
 PHOTOS -- when the first message includes an image, decide which of these it is and follow the matching rule:
+- Packaged products first rule: packaging is covered in pictures of fruit, berries, grains, and finished dishes -- that is flavor/ingredient ARTWORK, not the food. Never identify a packaged product from its artwork. Identify it from printed text only: brand name, product name, website domain, nutrition panel, barcode. A tub showing berries with "ORGAIN.COM" printed on it is Orgain protein powder, not a bag of berries.
+- Barcode digits: read them from the printed numerals under the bars, digit by digit (UPC-A has 12 digits, EAN-13 has 13). Double-check before calling off_barcode.
 - Nutrition label visible: transcribe the panel exactly as printed (serving size, servings per container, per-serving values). Set source to "label". Compute full-portion values from how many servings Jim actually ate: a hint like "I ate the whole box" multiplies the per-serving values by servings per container; with no hint, assume one serving and say so in notes.
 - Barcode with legible digits: call off_barcode with the digits. On a hit, set source to "off" and source_ref to the barcode. On a miss, fall back to reading the package text and using usda_search.
 - Package front only (no label, no barcode): identify the product from what's visible, then usda_search a Branded match or estimate; confidence is "medium" at best.

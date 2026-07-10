@@ -71,5 +71,6 @@ local server at the production `DATABASE_URL`.
 ## Environment
 
 Required: `DATABASE_URL`, `FOOD_API_KEY`, `ANTHROPIC_API_KEY`, `FDC_API_KEY`.
-Optional: `PORT` (default 8082), `AI_MODEL`, and the five `R2_*` vars
+Optional: `PORT` (default 8082), `AI_MODEL` (text parses), `AI_VISION_MODEL`
+(photo parses; defaults to Sonnet), and the five `R2_*` vars
 (photo features off until all are set). See ARCHITECTURE.md → Environment.

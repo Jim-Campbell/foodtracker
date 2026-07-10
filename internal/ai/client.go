@@ -19,8 +19,13 @@ const (
 	anthropicVersion = "2023-06-01"
 
 	// DefaultModel is used when AI_MODEL is unset.
-	DefaultModel     = "claude-sonnet-5"
-	DefaultMaxTokens = 4096
+	DefaultModel = "claude-sonnet-5"
+	// DefaultVisionModel is used for photo parses when AI_VISION_MODEL is
+	// unset. Vision OCR (barcode digits, nutrition panels) is where smaller
+	// models misread -- keep photo parses on Sonnet even when text parses run
+	// on Haiku via AI_MODEL.
+	DefaultVisionModel = "claude-sonnet-5"
+	DefaultMaxTokens   = 4096
 
 	RoleUser      = "user"
 	RoleAssistant = "assistant"

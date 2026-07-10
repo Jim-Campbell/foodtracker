@@ -329,7 +329,10 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
 ## Environment
 
 Required: `DATABASE_URL`, `FOOD_API_KEY`, `ANTHROPIC_API_KEY`, `FDC_API_KEY`.
-Optional: `PORT` (default 8082), `AI_MODEL` (default `claude-sonnet-5`),
+Optional: `PORT` (default 8082), `AI_MODEL` (default `claude-sonnet-5`; text
+parses), `AI_VISION_MODEL` (default `claude-sonnet-5`; photo parses stay on
+Sonnet even when `AI_MODEL` is Haiku — vision OCR like barcode digits is
+where smaller models misread),
 `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
 `R2_PUBLIC_URL` (photo features disabled until all five are set — the PWA
 hides the camera button when `/api/health` reports `photos: false`).

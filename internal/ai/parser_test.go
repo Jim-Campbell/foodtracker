@@ -121,7 +121,7 @@ func TestParserToolLoopMechanics(t *testing.T) {
 	usda := &fakeUSDA{results: []nutrition.FDCFood{{FDCID: 1, Description: "Egg, whole, raw"}}}
 	off := &fakeOFF{}
 
-	p := NewParser(messenger, usda, off, slog.Default())
+	p := NewParser(messenger, usda, off, "", slog.Default())
 	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -183,7 +183,7 @@ func TestParserMicrosAttachedServerSide(t *testing.T) {
 		},
 	}}}
 
-	p := NewParser(messenger, usda, &fakeOFF{}, slog.Default())
+	p := NewParser(messenger, usda, &fakeOFF{}, "", slog.Default())
 	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -238,7 +238,7 @@ func TestParserPreservesUnmodeledBlocks(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", slog.Default())
 	if _, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil); err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestParserRoundCapForcesRecordMeal(t *testing.T) {
 	usda := &fakeUSDA{}
 	off := &fakeOFF{}
 
-	p := NewParser(messenger, usda, off, slog.Default())
+	p := NewParser(messenger, usda, off, "", slog.Default())
 	result, err := p.ParseText(context.Background(), "some mystery food", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -304,7 +304,7 @@ func TestParserImageMessageShape(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "claude-sonnet-5", slog.Default())
 	imageBytes := []byte("fake-png-bytes")
 	result, err := p.ParseImage(context.Background(), imageBytes, "image/png", "I had half of this", "2026-07-07", nil)
 	if err != nil {
@@ -312,6 +312,10 @@ func TestParserImageMessageShape(t *testing.T) {
 	}
 	if result.Items[0].Source != food.SourceLabel {
 		t.Errorf("Source = %q, want label", result.Items[0].Source)
+	}
+
+	if got := messenger.calls[0].Model; got != "claude-sonnet-5" {
+		t.Errorf("photo parse request model = %q, want the vision model override", got)
 	}
 
 	firstMsg := messenger.calls[0].Messages[0]
@@ -370,7 +374,7 @@ func TestParserValidationWiring(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", slog.Default())
 	result, err := p.ParseText(context.Background(), "some carby thing", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)

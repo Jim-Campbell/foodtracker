@@ -37,28 +37,30 @@ func run(log *slog.Logger) error {
 		MigrDir     string
 		PWADir      string
 		// Optional — used only to report configured/not-configured in health
-		AnthropicKey string
-		AIModel      string
-		FDCKey       string
-		R2AccountID  string
-		R2AccessKey  string
-		R2SecretKey  string
-		R2Bucket     string
-		R2PublicURL  string
+		AnthropicKey  string
+		AIModel       string
+		AIVisionModel string
+		FDCKey        string
+		R2AccountID   string
+		R2AccessKey   string
+		R2SecretKey   string
+		R2Bucket      string
+		R2PublicURL   string
 	}{
-		DatabaseURL:  requireEnv("DATABASE_URL"),
-		APIKey:       requireEnv("FOOD_API_KEY"),
-		Port:         getEnv("PORT", "8082"),
-		MigrDir:      getEnv("MIGRATIONS_DIR", "internal/db/migrations"),
-		PWADir:       getEnv("PWA_DIR", "pwa"),
-		AnthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
-		AIModel:      getEnv("AI_MODEL", ai.DefaultModel),
-		FDCKey:       os.Getenv("FDC_API_KEY"),
-		R2AccountID:  os.Getenv("R2_ACCOUNT_ID"),
-		R2AccessKey:  os.Getenv("R2_ACCESS_KEY_ID"),
-		R2SecretKey:  os.Getenv("R2_SECRET_ACCESS_KEY"),
-		R2Bucket:     os.Getenv("R2_BUCKET"),
-		R2PublicURL:  os.Getenv("R2_PUBLIC_URL"),
+		DatabaseURL:   requireEnv("DATABASE_URL"),
+		APIKey:        requireEnv("FOOD_API_KEY"),
+		Port:          getEnv("PORT", "8082"),
+		MigrDir:       getEnv("MIGRATIONS_DIR", "internal/db/migrations"),
+		PWADir:        getEnv("PWA_DIR", "pwa"),
+		AnthropicKey:  os.Getenv("ANTHROPIC_API_KEY"),
+		AIModel:       getEnv("AI_MODEL", ai.DefaultModel),
+		AIVisionModel: getEnv("AI_VISION_MODEL", ai.DefaultVisionModel),
+		FDCKey:        os.Getenv("FDC_API_KEY"),
+		R2AccountID:   os.Getenv("R2_ACCOUNT_ID"),
+		R2AccessKey:   os.Getenv("R2_ACCESS_KEY_ID"),
+		R2SecretKey:   os.Getenv("R2_SECRET_ACCESS_KEY"),
+		R2Bucket:      os.Getenv("R2_BUCKET"),
+		R2PublicURL:   os.Getenv("R2_PUBLIC_URL"),
 	}
 
 	photosEnabled := cfg.R2AccountID != "" && cfg.R2AccessKey != "" &&
@@ -108,7 +110,7 @@ func run(log *slog.Logger) error {
 		client := ai.NewClient(cfg.AnthropicKey, cfg.AIModel)
 		fdc := nutrition.NewFDCClient(cfg.FDCKey)
 		off := nutrition.NewOFFClient()
-		parser := ai.NewParser(client, fdc, off, log)
+		parser := ai.NewParser(client, fdc, off, cfg.AIVisionModel, log)
 		textParser = parser
 		imageParser = parser
 	}
