@@ -427,19 +427,32 @@ function stopMic() {
 function buildLogBar() {
   const el = $('#logbar');
   const micBtn = SUPPORTS_SPEECH ? `<button class="iconbtn" id="micBtn" onclick="toggleMic()" title="Voice">🎤</button>` : '';
-  const camBtn = S.health.photos ? `<button class="iconbtn" onclick="$('#photoInput').click()" title="Photo">📷</button>` : '';
+  const camBtn = S.health.photos ? `<button class="iconbtn" onclick="photoChooser()" title="Photo">📷</button>` : '';
   el.innerHTML = `
     <input type="text" id="logInput" placeholder="What did you eat?" onkeydown="if(event.key==='Enter')submitText()">
     ${micBtn}${camBtn}
     <button class="iconbtn" onclick="openFavorites()" title="Favorites">⭐</button>
     <button class="iconbtn" onclick="weightDialog()" title="Log weight">⚖️</button>
     <button class="iconbtn primary" onclick="submitText()" title="Log">➤</button>
-    <!-- no capture attribute: iOS then offers its native Photo Library / Take Photo sheet -->
-    <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="onPhotoSelected(this.files[0]); this.value=''">
+    <!-- two inputs because browsers disagree about the native chooser: with
+         capture, straight to camera; without it, iOS Chrome offers no camera
+         at all. photoChooser() picks between them in-app. -->
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none" onchange="onPhotoSelected(this.files[0]); this.value=''">
+    <input type="file" id="libraryInput" accept="image/*" style="display:none" onchange="onPhotoSelected(this.files[0]); this.value=''">
   `;
+}
+function photoChooser() {
+  if (micOn) stopMic();
+  openDialog(`<h2>Add a photo</h2>
+    <div class="dlg-actions" style="flex-direction:column">
+      <button class="btn primary" onclick="closeDialog();$('#cameraInput').click()">📷 Take photo</button>
+      <button class="btn" onclick="closeDialog();$('#libraryInput').click()">🖼 Photo library</button>
+      <button class="btn ghost" onclick="closeDialog()">Cancel</button>
+    </div>`);
 }
 
 async function submitText() {
+  if (micOn) stopMic();
   const el = $('#logInput'); const text = el.value.trim();
   if (!text) return;
   el.value = '';
@@ -466,6 +479,7 @@ function downscaleImage(file, maxEdge, quality) {
 }
 async function onPhotoSelected(file) {
   if (!file) return;
+  if (micOn) stopMic();
   const hintInput = $('#logInput');
   const hint = hintInput.value.trim();
   hintInput.value = '';

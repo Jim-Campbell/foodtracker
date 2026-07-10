@@ -61,7 +61,7 @@ func (h *AIHandler) parse(w http.ResponseWriter, r *http.Request) {
 	// From here the response is an NDJSON progress stream (always 200);
 	// failures travel as an error event.
 	stream := newNDJSONStream(w)
-	stream.Progress("Reading your description…")
+	stream.Progress("Identifying foods…")
 	result, err := h.parser.ParseText(r.Context(), req.Text, req.Day, stream.Progress)
 	if err != nil {
 		h.log.Error("parse meal failed", "error", err)

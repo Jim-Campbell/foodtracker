@@ -103,7 +103,7 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string, progress 
 			continue
 		}
 		messages = append(messages, UserMessage(toolResults...))
-		emit("Building your draft…")
+		emit("Calculating nutrition…")
 	}
 
 	messages = append(messages, UserMessage(TextBlock(
