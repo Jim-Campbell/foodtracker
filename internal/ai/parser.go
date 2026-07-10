@@ -128,7 +128,37 @@ func (p *Parser) logRound(round int, started time.Time, resp *Response) {
 		"input_tokens", resp.Usage.InputTokens,
 		"cache_read", resp.Usage.CacheReadInputTokens,
 		"cache_write", resp.Usage.CacheCreationInputTokens,
-		"output_tokens", resp.Usage.OutputTokens)
+		"output_tokens", resp.Usage.OutputTokens,
+		"blocks", blockSummary(resp.Content))
+}
+
+// blockSummary renders a response's content-block composition, e.g.
+// "text(412),tool_use:record_meal" -- it answers "what were those output
+// tokens?" when a round looks slow.
+func blockSummary(raws []json.RawMessage) string {
+	var parts []string
+	for _, r := range raws {
+		var b struct {
+			Type     string `json:"type"`
+			Name     string `json:"name"`
+			Text     string `json:"text"`
+			Thinking string `json:"thinking"`
+		}
+		if err := json.Unmarshal(r, &b); err != nil {
+			continue
+		}
+		switch b.Type {
+		case "text":
+			parts = append(parts, fmt.Sprintf("text(%d)", len(b.Text)))
+		case "thinking":
+			parts = append(parts, fmt.Sprintf("thinking(%d)", len(b.Thinking)))
+		case "tool_use":
+			parts = append(parts, "tool_use:"+b.Name)
+		default:
+			parts = append(parts, b.Type)
+		}
+	}
+	return strings.Join(parts, ",")
 }
 
 type recordMealInput struct {
@@ -334,5 +364,6 @@ PHOTOS -- when the first message includes an image, decide which of these it is 
 
 FINISHING
 - notes is a glance-line for Jim, not a report: at most one short sentence, and only for something he couldn't guess himself (an unusual portion assumption, ambiguous wording, a failed lookup). When the read was straightforward, return an empty string. Never re-list the items or narrate your process.
+- Never write prose around tool calls. A response that calls a tool -- including record_meal -- must contain ONLY the tool call(s), no text before or after. Nobody reads that text; every token of it just makes the parse slower.
 - Call record_meal exactly once, as your final action, to submit the parsed items.`, day, docs.DietFramework)
 }
