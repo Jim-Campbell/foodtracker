@@ -95,6 +95,9 @@ func (h *PhotoHandler) upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to upload photo")
 		return
 	}
+	// The url is what the PWA's <img> tags will request -- logged so a broken
+	// thumbnail can be diagnosed by opening this exact URL.
+	h.log.Info("photo uploaded", "key", key, "url", url, "bytes", header.Size, "content_type", contentType)
 	writeJSON(w, http.StatusCreated, map[string]string{"key": key, "url": url})
 }
 
