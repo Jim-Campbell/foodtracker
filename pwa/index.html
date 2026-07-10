@@ -814,6 +814,26 @@ function calorieBars(rows, target) {
   const targetLine = targetY != null ? `<line x1="${pad}" y1="${targetY}" x2="${w - pad}" y2="${targetY}" stroke="var(--muted)" stroke-dasharray="4 3"/>` : '';
   return `<svg viewBox="0 0 ${w} ${h}" class="chart">${targetLine}${bars}</svg>`;
 }
+// proteinBars mirrors calorieBars with the target inverted: protein is a
+// floor, not a ceiling, so bars go green when the target is reached.
+function proteinBars(rows, targetMg) {
+  const w = 320, h = 150, pad = 16;
+  const grams = rows.map(r => Math.round(r.protein_mg / 1000));
+  const targetG = Math.round((targetMg || 0) / 1000);
+  const maxVal = Math.max(targetG, ...grams, 1) * 1.1;
+  const bw = (w - 2 * pad) / rows.length;
+  const bars = rows.map((r, i) => {
+    const g = grams[i];
+    const bh = (g / maxVal) * (h - 2 * pad);
+    const x = pad + i * bw;
+    const y = h - pad - bh;
+    const color = targetG > 0 && g >= targetG ? 'var(--green)' : 'var(--primary)';
+    return `<rect x="${x + 1.5}" y="${y}" width="${Math.max(bw - 3, 1)}" height="${Math.max(bh, 1)}" rx="2" fill="${color}" style="cursor:pointer" onclick="jumpToDay('${r.day}')"/>`;
+  }).join('');
+  const targetY = targetG > 0 ? h - pad - (targetG / maxVal) * (h - 2 * pad) : null;
+  const targetLine = targetY != null ? `<line x1="${pad}" y1="${targetY}" x2="${w - pad}" y2="${targetY}" stroke="var(--muted)" stroke-dasharray="4 3"/>` : '';
+  return `<svg viewBox="0 0 ${w} ${h}" class="chart">${targetLine}${bars}</svg>`;
+}
 function weightChart(weights, targetG) {
   if (!weights.length) return '<div class="empty">No weigh-ins in this range</div>';
   const w = 320, h = 150, pad = 16;
@@ -868,6 +888,10 @@ function renderTrends(m) {
         <div><div class="big">${avgScore ?? '–'}</div><div class="s muted">avg score</div></div>
       </div>
       ${calorieBars(merged, S.settings?.calorie_target || 0)}
+    </div>
+    <div class="card">
+      <h3>Protein</h3>
+      ${proteinBars(merged, S.settings?.protein_target_mg || 0)}
     </div>
     <div class="card">
       <h3>Weight</h3>
