@@ -101,7 +101,7 @@ func tools() []Tool {
 		},
 		{
 			Name:        toolRecordMeal,
-			Description: "Terminal tool: submit the final parsed meal. Always call this exactly once to finish, even if some items are estimates.",
+			Description: "Terminal tool: submit the final parsed meal. Always call this exactly once to finish, even if some items are estimates. Your response must contain only this tool call -- no text before or after it.",
 			InputSchema: recordMealSchema,
 		},
 	}

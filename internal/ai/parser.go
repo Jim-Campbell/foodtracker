@@ -123,6 +123,7 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.Pa
 func (p *Parser) logRound(round int, started time.Time, resp *Response) {
 	p.log.Info("parse round",
 		"round", round,
+		"model", resp.Model,
 		"dur_ms", time.Since(started).Milliseconds(),
 		"stop", resp.StopReason,
 		"input_tokens", resp.Usage.InputTokens,
