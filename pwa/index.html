@@ -799,6 +799,15 @@ async function loadTrends() {
 function setTrendsRange(r) { S.trendsRange = r; S.trendRows = null; render(); }
 function jumpToDay(day) { S.day = day; goTab('today'); loadDay(day).then(render).catch(e => toast('Error: ' + e.message)); }
 
+// barValueLabel puts a small value above a bar. Wide bars (week view) get a
+// horizontal number; narrow ones (month view) rotate it vertical so 30 bars
+// stay legible. Zero-value days get no label.
+function barValueLabel(val, x, y, bw) {
+  if (!val) return '';
+  const cx = x + bw / 2;
+  if (bw >= 18) return `<text x="${cx}" y="${y - 3}" font-size="8" text-anchor="middle" fill="var(--muted)">${val}</text>`;
+  return `<text x="${cx + 2}" y="${y - 3}" font-size="6.5" text-anchor="start" fill="var(--muted)" transform="rotate(-90 ${cx + 2} ${y - 3})">${val}</text>`;
+}
 function calorieBars(rows, target) {
   const w = 320, h = 150, pad = 16;
   const maxVal = Math.max(target, ...rows.map(r => r.calories), 1) * 1.1;
@@ -809,8 +818,10 @@ function calorieBars(rows, target) {
     const y = h - pad - bh;
     const color = target > 0 && r.calories > target ? 'var(--red)' : 'var(--green)';
     const dotColor = r.score == null ? '' : (r.score >= 80 ? 'var(--green)' : r.score >= 60 ? 'var(--amber)' : 'var(--red)');
-    const dot = r.score != null ? `<circle cx="${x + bw / 2}" cy="${y - 6}" r="3" fill="${dotColor}"/>` : '';
-    return `<rect x="${x + 1.5}" y="${y}" width="${Math.max(bw - 3, 1)}" height="${Math.max(bh, 1)}" rx="2" fill="${color}" style="cursor:pointer" onclick="jumpToDay('${r.day}')"/>${dot}`;
+    // Score dot sits inside the top of the bar; the value label owns the
+    // space above it.
+    const dot = r.score != null ? `<circle cx="${x + bw / 2}" cy="${Math.min(y + 6, h - pad - 4)}" r="3" fill="${dotColor}" stroke="var(--card)" stroke-width="1"/>` : '';
+    return `<rect x="${x + 1.5}" y="${y}" width="${Math.max(bw - 3, 1)}" height="${Math.max(bh, 1)}" rx="2" fill="${color}" style="cursor:pointer" onclick="jumpToDay('${r.day}')"/>${dot}${barValueLabel(r.calories, x, y, bw)}`;
   }).join('');
   const targetY = target > 0 ? h - pad - (target / maxVal) * (h - 2 * pad) : null;
   const targetLine = targetY != null ? `<line x1="${pad}" y1="${targetY}" x2="${w - pad}" y2="${targetY}" stroke="var(--muted)" stroke-dasharray="4 3"/>` : '';
@@ -830,7 +841,7 @@ function proteinBars(rows, targetMg) {
     const x = pad + i * bw;
     const y = h - pad - bh;
     const color = targetG > 0 && g >= targetG ? 'var(--green)' : 'var(--primary)';
-    return `<rect x="${x + 1.5}" y="${y}" width="${Math.max(bw - 3, 1)}" height="${Math.max(bh, 1)}" rx="2" fill="${color}" style="cursor:pointer" onclick="jumpToDay('${r.day}')"/>`;
+    return `<rect x="${x + 1.5}" y="${y}" width="${Math.max(bw - 3, 1)}" height="${Math.max(bh, 1)}" rx="2" fill="${color}" style="cursor:pointer" onclick="jumpToDay('${r.day}')"/>${barValueLabel(g, x, y, bw)}`;
   }).join('');
   const targetY = targetG > 0 ? h - pad - (targetG / maxVal) * (h - 2 * pad) : null;
   const targetLine = targetY != null ? `<line x1="${pad}" y1="${targetY}" x2="${w - pad}" y2="${targetY}" stroke="var(--muted)" stroke-dasharray="4 3"/>` : '';
