@@ -196,6 +196,40 @@ function askKey() {
   const k = prompt('Enter the Food API key:');
   if (k) { localStorage.setItem('food_key', k.trim()); boot(); }
 }
+// POST to an NDJSON-streaming endpoint (/parse, /analyze-photo): progress
+// events go to onProgress, and the result event resolves the call.
+async function apiStream(path, body, onProgress) {
+  const res = await fetch('/api' + path, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + apiKey(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) { askKey(); throw new Error('unauthorized'); }
+  if (!res.ok) {
+    let msg = 'request failed';
+    try { msg = (await res.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.type === 'progress' && onProgress) onProgress(ev.message);
+      else if (ev.type === 'result') return ev.result;
+      else if (ev.type === 'error') throw new Error(ev.error);
+    }
+  }
+  throw new Error('connection dropped mid-parse');
+}
 
 // ---------- utils ----------
 const $ = s => document.querySelector(s);
@@ -221,7 +255,11 @@ function toast(msg, ms = 2400) {
 function openDialog(html) { const d = $('#dlg'); d.classList.remove('wide'); d.innerHTML = html; if (!d.open) d.showModal(); }
 function closeDialog() { $('#dlg').close(); }
 function showSpinnerDialog(label) {
-  openDialog(`<div class="center" style="padding:50px 0"><div class="spinner"></div><div class="muted" style="margin-top:14px">${label || 'Parsing…'}</div></div>`);
+  openDialog(`<div class="center" style="padding:50px 0"><div class="spinner"></div><div class="muted" id="spinnerStatus" style="margin-top:14px">${label || 'Parsing…'}</div></div>`);
+}
+function setSpinnerStatus(msg) {
+  const el = $('#spinnerStatus');
+  if (el) el.textContent = msg;
 }
 
 // ---------- tabs ----------
@@ -407,7 +445,7 @@ async function submitText() {
   el.value = '';
   const kind = usedMicForCurrent ? 'voice' : 'text';
   usedMicForCurrent = false; micBase = '';
-  await runParse(() => api('/parse', { method: 'POST', body: { text, day: S.day } }), { input_kind: kind, description: text });
+  await runParse(() => apiStream('/parse', { text, day: S.day }, setSpinnerStatus), { input_kind: kind, description: text });
 }
 function downscaleImage(file, maxEdge, quality) {
   return new Promise((resolve, reject) => {
@@ -436,7 +474,7 @@ async function onPhotoSelected(file) {
     const blob = await downscaleImage(file, 1600, 0.8);
     const fd = new FormData(); fd.append('image', blob, 'photo.jpg');
     const up = await api('/photos', { method: 'POST', body: fd });
-    const draft = await api('/analyze-photo', { method: 'POST', body: { key: up.key, hint, day: S.day } });
+    const draft = await apiStream('/analyze-photo', { key: up.key, hint, day: S.day }, setSpinnerStatus);
     openDraftDialog(draft, { input_kind: 'photo', photo_key: up.key, photo_url: up.url, description: hint });
   } catch (e) { closeDialog(); toast('Error: ' + e.message); }
 }

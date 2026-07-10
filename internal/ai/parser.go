@@ -48,24 +48,35 @@ func NewParser(client Messenger, usda USDASearcher, off BarcodeLookuper, log *sl
 	return &Parser{client: client, usda: usda, off: off, log: log}
 }
 
+// Progress receives short user-facing status lines ("Looking up “feta
+// cheese”…") as the parse advances; the API layer streams them to the PWA so
+// the wait narrates itself. The exported methods take the unnamed func(string)
+// form (nil allowed) so *Parser satisfies the api-package interfaces.
+type Progress func(msg string)
+
 // ParseText parses a casual text description of a meal.
-func (p *Parser) ParseText(ctx context.Context, text, day string) (*food.ParseResult, error) {
-	return p.Parse(ctx, UserMessage(TextBlock(text)), day)
+func (p *Parser) ParseText(ctx context.Context, text, day string, progress func(string)) (*food.ParseResult, error) {
+	return p.Parse(ctx, UserMessage(TextBlock(text)), day, progress)
 }
 
 // ParseImage parses a photo (label, barcode, package, or plate) plus an
 // optional hint like "I had half of this".
-func (p *Parser) ParseImage(ctx context.Context, imageData []byte, mediaType, hint, day string) (*food.ParseResult, error) {
+func (p *Parser) ParseImage(ctx context.Context, imageData []byte, mediaType, hint, day string, progress func(string)) (*food.ParseResult, error) {
 	hintText := "No hint was given -- read the photo directly and parse it (nutrition label, barcode, package, or plate of food)."
 	if hint != "" {
 		hintText = "Hint from Jim: " + hint
 	}
-	return p.Parse(ctx, UserMessage(ImageBlock(mediaType, imageData), TextBlock(hintText)), day)
+	return p.Parse(ctx, UserMessage(ImageBlock(mediaType, imageData), TextBlock(hintText)), day, progress)
 }
 
 // Parse runs the tool loop starting from a prepared first user message --
-// text today, a vision message (image + hint) in phase 4.
-func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.ParseResult, error) {
+// plain text, or a vision message (image + hint).
+func (p *Parser) Parse(ctx context.Context, first Message, day string, progress func(string)) (*food.ParseResult, error) {
+	emit := func(msg string) {
+		if progress != nil {
+			progress(msg)
+		}
+	}
 	system := CachedSystem(p.systemPrompt(day))
 	messages := []Message{first}
 	cache := microsCache{}
@@ -85,13 +96,14 @@ func (p *Parser) Parse(ctx context.Context, first Message, day string) (*food.Pa
 			return p.finish(in, resp.Model, messages, cache)
 		}
 
-		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache)
+		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache, emit)
 		if !calledAny {
 			messages = append(messages, UserMessage(TextBlock(
 				"Continue. When you have enough information, call record_meal to finish.")))
 			continue
 		}
 		messages = append(messages, UserMessage(toolResults...))
+		emit("Building your draft…")
 	}
 
 	messages = append(messages, UserMessage(TextBlock(
@@ -184,29 +196,29 @@ func extractRecordMeal(content []json.RawMessage) (*recordMealInput, bool) {
 // executeTools runs every tool_use block in content and returns the matching
 // tool_result blocks, in order. calledAny is false when content had no tool
 // calls at all (the model just talked).
-func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage, cache microsCache) (results []json.RawMessage, calledAny bool) {
+func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage, cache microsCache, emit Progress) (results []json.RawMessage, calledAny bool) {
 	for _, b := range decodeBlocks(content) {
 		if b.Type != "tool_use" {
 			continue
 		}
 		calledAny = true
-		results = append(results, p.executeTool(ctx, b, cache))
+		results = append(results, p.executeTool(ctx, b, cache, emit))
 	}
 	return results, calledAny
 }
 
-func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsCache) json.RawMessage {
+func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsCache, emit Progress) json.RawMessage {
 	switch block.Name {
 	case toolUSDASearch:
-		return p.execUSDASearch(ctx, block, cache)
+		return p.execUSDASearch(ctx, block, cache, emit)
 	case toolOFFBarcode:
-		return p.execOFFBarcode(ctx, block, cache)
+		return p.execOFFBarcode(ctx, block, cache, emit)
 	default:
 		return ToolResultBlock(block.ID, fmt.Sprintf("unknown tool %q", block.Name), true)
 	}
 }
 
-func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache microsCache) json.RawMessage {
+func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache microsCache, emit Progress) json.RawMessage {
 	var in struct {
 		Query    string `json:"query"`
 		PageSize int    `json:"page_size"`
@@ -214,6 +226,7 @@ func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache micr
 	if err := json.Unmarshal(block.Input, &in); err != nil {
 		return ToolResultBlock(block.ID, fmt.Sprintf("invalid usda_search input: %v", err), true)
 	}
+	emit(fmt.Sprintf("Looking up “%s”…", in.Query))
 
 	t0 := time.Now()
 	results, err := p.usda.Search(ctx, in.Query, in.PageSize)
@@ -249,13 +262,14 @@ func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache micr
 	return ToolResultBlock(block.ID, string(body), false)
 }
 
-func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache microsCache) json.RawMessage {
+func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache microsCache, emit Progress) json.RawMessage {
 	var in struct {
 		Code string `json:"code"`
 	}
 	if err := json.Unmarshal(block.Input, &in); err != nil {
 		return ToolResultBlock(block.ID, fmt.Sprintf("invalid off_barcode input: %v", err), true)
 	}
+	emit("Checking the barcode…")
 
 	t0 := time.Now()
 	product, err := p.off.Lookup(ctx, in.Code)

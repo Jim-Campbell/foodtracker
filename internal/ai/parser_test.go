@@ -122,7 +122,7 @@ func TestParserToolLoopMechanics(t *testing.T) {
 	off := &fakeOFF{}
 
 	p := NewParser(messenger, usda, off, slog.Default())
-	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07")
+	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestParserMicrosAttachedServerSide(t *testing.T) {
 	}}}
 
 	p := NewParser(messenger, usda, &fakeOFF{}, slog.Default())
-	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07")
+	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestParserPreservesUnmodeledBlocks(t *testing.T) {
 	}}
 
 	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
-	if _, err := p.ParseText(context.Background(), "an egg", "2026-07-07"); err != nil {
+	if _, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil); err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}
 
@@ -275,7 +275,7 @@ func TestParserRoundCapForcesRecordMeal(t *testing.T) {
 	off := &fakeOFF{}
 
 	p := NewParser(messenger, usda, off, slog.Default())
-	result, err := p.ParseText(context.Background(), "some mystery food", "2026-07-07")
+	result, err := p.ParseText(context.Background(), "some mystery food", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestParserImageMessageShape(t *testing.T) {
 
 	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
 	imageBytes := []byte("fake-png-bytes")
-	result, err := p.ParseImage(context.Background(), imageBytes, "image/png", "I had half of this", "2026-07-07")
+	result, err := p.ParseImage(context.Background(), imageBytes, "image/png", "I had half of this", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseImage: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestParserValidationWiring(t *testing.T) {
 	}}
 
 	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, slog.Default())
-	result, err := p.ParseText(context.Background(), "some carby thing", "2026-07-07")
+	result, err := p.ParseText(context.Background(), "some carby thing", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}

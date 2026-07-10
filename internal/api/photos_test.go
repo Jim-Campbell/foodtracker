@@ -56,7 +56,7 @@ type fakeImageParser struct {
 	err       error
 }
 
-func (f *fakeImageParser) ParseImage(ctx context.Context, imageData []byte, mediaType, hint, day string) (*food.ParseResult, error) {
+func (f *fakeImageParser) ParseImage(ctx context.Context, imageData []byte, mediaType, hint, day string, progress func(string)) (*food.ParseResult, error) {
 	f.imageData = imageData
 	f.mediaType = mediaType
 	f.hint = hint
@@ -196,12 +196,26 @@ func TestAnalyzePhotoPassesImageBytesToParser(t *testing.T) {
 		t.Errorf("parser day = %q, want 2026-07-07", parser.day)
 	}
 
-	var result food.ParseResult
-	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
-		t.Fatalf("decode response: %v", err)
+	// The response is an NDJSON stream: progress event(s), then the result.
+	if ct := rr.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("Content-Type = %q, want application/x-ndjson", ct)
 	}
-	if result.Notes != "parsed from photo" {
-		t.Errorf("Notes = %q, want the parser's result echoed back", result.Notes)
+	lines := strings.Split(strings.TrimSpace(rr.Body.String()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("stream has %d lines, want at least a progress and a result event: %s", len(lines), rr.Body.String())
+	}
+	var last struct {
+		Type   string           `json:"type"`
+		Result food.ParseResult `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("decode final stream event: %v", err)
+	}
+	if last.Type != "result" {
+		t.Fatalf("final event type = %q, want result", last.Type)
+	}
+	if last.Result.Notes != "parsed from photo" {
+		t.Errorf("Notes = %q, want the parser's result echoed back", last.Result.Notes)
 	}
 }
 

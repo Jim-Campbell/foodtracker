@@ -33,9 +33,10 @@ type PhotoStore interface {
 	GetPhoto(ctx context.Context, key string) ([]byte, string, error)
 }
 
-// ImageParser is the subset of *ai.Parser used for vision parses.
+// ImageParser is the subset of *ai.Parser used for vision parses. The
+// progress callback (may be nil) receives user-facing status lines.
 type ImageParser interface {
-	ParseImage(ctx context.Context, imageData []byte, mediaType, hint, day string) (*food.ParseResult, error)
+	ParseImage(ctx context.Context, imageData []byte, mediaType, hint, day string, progress func(string)) (*food.ParseResult, error)
 }
 
 // PhotoHandler serves photo upload and vision-parse endpoints. Nil-safe:
@@ -142,11 +143,15 @@ func (h *PhotoHandler) analyze(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/jpeg"
 	}
 
-	result, err := h.parser.ParseImage(r.Context(), data, contentType, req.Hint, req.Day)
+	// From here the response is an NDJSON progress stream (always 200);
+	// failures travel as an error event.
+	stream := newNDJSONStream(w)
+	stream.Progress("Reading your photo…")
+	result, err := h.parser.ParseImage(r.Context(), data, contentType, req.Hint, req.Day, stream.Progress)
 	if err != nil {
 		h.log.Error("analyze photo failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to analyze photo")
+		stream.Error("failed to analyze photo")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	stream.Result(result)
 }

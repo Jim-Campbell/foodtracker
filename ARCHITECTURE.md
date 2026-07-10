@@ -183,10 +183,10 @@ exactly like journal/finance. JSON in/out. `/api/health` is unauthenticated.
 ```
 GET    /api/health
 
-POST   /api/parse           {text, day}                       → ParseResult (draft, nothing saved)
+POST   /api/parse           {text, day}                       → NDJSON stream (see below), ends in ParseResult
 POST   /api/photos          multipart image                   → {key, url}   (upload to R2)
-POST   /api/analyze-photo   {key, hint, day}                  → ParseResult (vision parse; hint carries
-                                                                 "half of this", "just the salmon", etc.)
+POST   /api/analyze-photo   {key, hint, day}                  → NDJSON stream (see below); hint carries
+                                                                 "half of this", "just the salmon", etc.
 
 POST   /api/meals           {day, slot, description, input_kind, photo_key,
                              photo_url, ai_model, ai_raw, items:[Item]}   → Meal (saves a confirmed draft)
@@ -214,6 +214,16 @@ PUT    /api/settings        {calorie_target, protein_target_mg, weight_target_g}
 
 GET    /api/export          → full-DB JSON download (meals+items+weights+favorites+settings)
 ```
+
+The two parse endpoints stream progress so the PWA can narrate the wait
+instead of showing a blank spinner. The response is
+`application/x-ndjson` — one JSON object per line, flushed as the AI loop
+runs: any number of `{"type":"progress","message":"Looking up “feta
+cheese”…"}` lines, then exactly one `{"type":"result","result":<ParseResult>}`
+or `{"type":"error","error":"..."}`. Request-validation failures (4xx/503)
+are still plain JSON errors before the stream starts. The PWA reads the
+stream with `fetch` + `ReadableStream` (`apiStream`) and updates the spinner
+status line per progress event.
 
 `ParseResult`:
 

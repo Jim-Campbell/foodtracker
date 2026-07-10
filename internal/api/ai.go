@@ -12,9 +12,10 @@ import (
 	"github.com/jimgcampbell/food/internal/food"
 )
 
-// Parser is the subset of *ai.Parser the handler depends on.
+// Parser is the subset of *ai.Parser the handler depends on. The progress
+// callback (may be nil) receives user-facing status lines as the loop runs.
 type Parser interface {
-	ParseText(ctx context.Context, text, day string) (*food.ParseResult, error)
+	ParseText(ctx context.Context, text, day string, progress func(string)) (*food.ParseResult, error)
 }
 
 // AIHandler serves the AI parse endpoints. It's nil-safe: when no
@@ -57,11 +58,15 @@ func (h *AIHandler) parse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.parser.ParseText(r.Context(), req.Text, req.Day)
+	// From here the response is an NDJSON progress stream (always 200);
+	// failures travel as an error event.
+	stream := newNDJSONStream(w)
+	stream.Progress("Reading your description…")
+	result, err := h.parser.ParseText(r.Context(), req.Text, req.Day, stream.Progress)
 	if err != nil {
 		h.log.Error("parse meal failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to parse meal")
+		stream.Error("failed to parse meal")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	stream.Result(result)
 }
