@@ -363,7 +363,9 @@ function mealProtein(m) {
   return (m.items || []).reduce((s, i) => s + Math.round(i.protein_mg * i.fraction_pct / 100 / 1000), 0);
 }
 function mealRow(m) {
-  const thumb = m.photo_url ? `<img class="thumb" src="${esc(m.photo_url)}">` : '';
+  // onerror: a photo that can't load (misconfigured R2 public URL, deleted
+  // object) hides itself instead of showing the browser's broken-image icon.
+  const thumb = m.photo_url ? `<img class="thumb" src="${esc(m.photo_url)}" onerror="this.remove()">` : '';
   const star = matchingFavorite(m.items) ? ' <span title="Favorited">★</span>' : '';
   return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}${star}</div><div class="s">${mealCalories(m)} cal · ${mealProtein(m)} g protein</div></div></div>`;
 }
