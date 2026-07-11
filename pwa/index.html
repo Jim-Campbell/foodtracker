@@ -106,6 +106,9 @@ input[type=text], input[type=number], input[type=date] {
 .gramsIn { width: 52px; padding: 6px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font-size: .85rem; }
 .irow-mid .s { white-space: nowrap; }
 .wholefrac { margin: 10px 0; padding-top: 8px; border-top: 1px dashed var(--line); }
+/* meal photo in the detail dialog: cropped banner, tap to see the full shot */
+.dphoto { width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; margin: 8px 0 10px; cursor: pointer; display: block; }
+.dphoto.full { max-height: none; object-fit: contain; }
 .dfoot { position: sticky; bottom: 0; background: var(--card); padding-top: 8px; }
 .dtot { font-size: .95rem; text-align: center; }
 /* bottom bar */
@@ -692,6 +695,7 @@ function draftDialogHTML() {
   const totals = itemTotals(DRAFT.items);
   const title = DRAFT.mode === 'edit' ? 'Edit meal' : 'Confirm meal';
   return `<h2>${title}</h2>
+    ${DRAFT.photo_url ? `<img class="dphoto" src="${esc(DRAFT.photo_url)}" onerror="this.remove()" onclick="this.classList.toggle('full')" title="Tap to expand">` : ''}
     ${DRAFT.notes && DRAFT.notesShown ? `<div class="hint ${DRAFT.notesOpen ? 'open' : ''}" onclick="DRAFT.notesOpen=!DRAFT.notesOpen;renderDraftDialog()"><span class="hint-txt">💡 ${esc(DRAFT.notes)}</span><button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();DRAFT.notesShown=false;renderDraftDialog()">✕</button></div>` : ''}
     <div class="itemlist">${DRAFT.items.map((it, idx) => draftItemRow(it, idx)).join('') || '<div class="empty">No items</div>'}</div>
     <div class="wholefrac">
