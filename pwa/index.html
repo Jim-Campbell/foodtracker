@@ -292,15 +292,24 @@ async function loadDay(d) { S.summary = await api('/day/' + d); }
 function ring(eatenCal, targetCal) {
   const pct = targetCal > 0 ? Math.min(eatenCal / targetCal, 1) : 0;
   const remaining = targetCal - eatenCal;
+  const over = targetCal > 0 && remaining < 0;
   const r = 54, c = 2 * Math.PI * r, off = c * (1 - pct);
+  // Over budget: the outer ring is the spent budget (amber, full) and an
+  // inner red ring shows the overage as a fraction of the target.
   let color = 'var(--green)';
-  if (remaining < 0) color = 'var(--red)';
+  if (over) color = 'var(--amber)';
   else if (targetCal > 0 && remaining <= targetCal * 0.1) color = 'var(--amber)';
-  const label = remaining < 0 ? `+${Math.round(Math.abs(remaining))}` : `${Math.round(remaining)}`;
-  const sub = remaining < 0 ? 'over' : 'remaining';
+  let inner = '';
+  if (over) {
+    const overPct = Math.min(-remaining / targetCal, 1);
+    const r2 = 43, c2 = 2 * Math.PI * r2;
+    inner = `<circle class="ring-bg" cx="60" cy="60" r="${r2}" style="stroke-width:7"/><circle class="ring-fg" cx="60" cy="60" r="${r2}" style="stroke:var(--red);stroke-width:7;stroke-dasharray:${c2};stroke-dashoffset:${c2 * (1 - overPct)}"/>`;
+  }
+  const label = over ? `+${Math.round(-remaining)}` : `${Math.round(remaining)}`;
+  const sub = over ? 'over' : 'remaining';
   return `<div class="ringwrap">
-    <svg viewBox="0 0 120 120"><circle class="ring-bg" cx="60" cy="60" r="${r}"/><circle class="ring-fg" cx="60" cy="60" r="${r}" style="stroke:${color};stroke-dasharray:${c};stroke-dashoffset:${off}"/></svg>
-    <div class="ring-center"><div class="big">${label}</div><div class="muted sm">${sub}</div></div>
+    <svg viewBox="0 0 120 120"><circle class="ring-bg" cx="60" cy="60" r="${r}"/><circle class="ring-fg" cx="60" cy="60" r="${r}" style="stroke:${color};stroke-dasharray:${c};stroke-dashoffset:${off}"/>${inner}</svg>
+    <div class="ring-center"><div class="big"${over ? ' style="color:var(--red)"' : ''}>${label}</div><div class="muted sm">${sub}</div></div>
   </div>`;
 }
 function proteinBar(eatenMg, targetMg) {
@@ -694,7 +703,9 @@ function setDraftGrams(idx, val) {
 function draftDialogHTML() {
   const totals = itemTotals(DRAFT.items);
   const title = DRAFT.mode === 'edit' ? 'Edit meal' : 'Confirm meal';
+  const name = DRAFT.description || DRAFT.items.map(i => i.name).join(', ');
   return `<h2>${title}</h2>
+    <div class="s muted" style="margin:2px 0 8px">${name ? esc(name) + ' · ' : ''}<b>${totals.cal}</b> cal · ${totals.protein} g protein</div>
     ${DRAFT.photo_url ? `<img class="dphoto" src="${esc(DRAFT.photo_url)}" onerror="this.remove()" onclick="this.classList.toggle('full')" title="Tap to expand">` : ''}
     ${DRAFT.notes && DRAFT.notesShown ? `<div class="hint ${DRAFT.notesOpen ? 'open' : ''}" onclick="DRAFT.notesOpen=!DRAFT.notesOpen;renderDraftDialog()"><span class="hint-txt">💡 ${esc(DRAFT.notes)}</span><button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();DRAFT.notesShown=false;renderDraftDialog()">✕</button></div>` : ''}
     <div class="itemlist">${DRAFT.items.map((it, idx) => draftItemRow(it, idx)).join('') || '<div class="empty">No items</div>'}</div>
@@ -950,6 +961,7 @@ async function saveSettings() {
   try {
     S.settings = await api('/settings', { method: 'PUT', body });
     S.trendRows = null;
+    await loadDay(S.day); // the day summary embeds the targets -- refresh so the ring updates now
     toast('Saved'); render();
   } catch (e) { toast('Error: ' + e.message); }
 }
