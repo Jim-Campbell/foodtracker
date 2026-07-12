@@ -725,8 +725,9 @@ function fracChips(it, idx) {
   return `<div class="chips">${opts.map(([v, l]) => `<button class="${cur === v ? 'on' : ''}" onclick="${idx === -1 ? `setAllFraction(${v})` : `setItemFraction(${idx},${v})`}">${l}</button>`).join('')}</div>`;
 }
 function draftItemRow(it, idx) {
+  const eaten = k => Math.round(it[k] * it.fraction_pct / 100 / 1000);
   const eatenCal = Math.round(it.calories * it.fraction_pct / 100);
-  const eatenP = Math.round(it.protein_mg * it.fraction_pct / 100 / 1000);
+  const macro = (grams, key, letter) => `<span style="color:${MACRO_COLORS[key]}" title="${key}">${grams}g ${letter}</span>`;
   return `<div class="itemrow">
     <div class="irow-top">
       <div class="grow">
@@ -737,7 +738,7 @@ function draftItemRow(it, idx) {
     </div>
     <div class="irow-mid">
       <input type="number" class="gramsIn" value="${it.grams || ''}" placeholder="g" onchange="setDraftGrams(${idx},this.value)">
-      <span class="s">${eatenCal} cal · ${eatenP} g protein</span>
+      <span class="s">${eatenCal} cal · ${macro(eaten('protein_mg'), 'protein', 'P')} · ${macro(eaten('carbs_mg'), 'carbs', 'C')} · ${macro(eaten('fat_mg'), 'fat', 'F')}</span>
     </div>
     ${fracChips(it, idx)}
   </div>`;
