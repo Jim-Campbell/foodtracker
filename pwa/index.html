@@ -100,6 +100,11 @@ input[type=text], input[type=number], input[type=date] {
 .pbar { background: var(--chip); border-radius: 5px; height: 10px; margin: 18px 0 4px; overflow: hidden; }
 .pbar-fill { height: 100%; transition: width .3s; }
 .pbar-label { font-size: .8rem; color: var(--muted); }
+/* macro pie + legend row in the day hero */
+.macrorow { display: flex; align-items: center; gap: 16px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.macrorow svg { flex-shrink: 0; }
+.leg { font-size: .8rem; line-height: 1.5; display: flex; align-items: center; gap: 6px; }
+.legdot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 /* item editor */
 .itemlist { margin-bottom: 6px; }
 .itemrow { border-bottom: 1px solid var(--line); padding: 10px 0; }
@@ -321,6 +326,49 @@ function proteinBar(eatenMg, targetMg) {
   return `<div class="pbar"><div class="pbar-fill" style="width:${pct}%;background:${over ? 'var(--green)' : 'var(--primary)'}"></div></div>
   <div class="pbar-label">${Math.round(eatenMg / 1000)} / ${Math.round(targetMg / 1000)} g protein</div>`;
 }
+// Macro colors, shared by the day-view pie and the trends stack.
+const MACRO_COLORS = { protein: 'var(--primary)', carbs: 'var(--amber)', fat: 'var(--muted)' };
+function pieSVG(parts, size) {
+  const total = parts.reduce((s, p) => s + p.val, 0);
+  if (total <= 0) return '';
+  const cx = 32, cy = 32, r = 30;
+  let a0 = -Math.PI / 2;
+  const paths = parts.filter(p => p.val > 0).map(p => {
+    if (p.val === total) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${p.color}"/>`;
+    const a1 = a0 + (p.val / total) * 2 * Math.PI;
+    const large = (a1 - a0) > Math.PI ? 1 : 0;
+    const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+    a0 = a1;
+    return `<path d="M${cx},${cy} L${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} Z" fill="${p.color}"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 64 64" width="${size}" height="${size}">${paths}</svg>`;
+}
+// macroRow: small pie of calorie share (protein 4 / carbs 4 / fat 9 kcal per
+// gram) plus gram totals, and the fiber total alongside.
+function macroRow(s) {
+  const pg = Math.round(s.protein_mg / 1000), cg = Math.round(s.carbs_mg / 1000), fg = Math.round(s.fat_mg / 1000);
+  const fiberG = Math.round(s.fiber_mg / 1000);
+  const pk = pg * 4, ck = cg * 4, fk = fg * 9;
+  const tot = pk + ck + fk;
+  if (tot <= 0) return '';
+  const pct = k => Math.round(k * 100 / tot);
+  const leg = (color, label, pctV, grams) =>
+    `<div class="leg"><span class="legdot" style="background:${color}"></span>${label} <b>${pctV}%</b> · ${grams} g</div>`;
+  return `<div class="macrorow">
+    ${pieSVG([
+      { val: pk, color: MACRO_COLORS.protein },
+      { val: ck, color: MACRO_COLORS.carbs },
+      { val: fk, color: MACRO_COLORS.fat },
+    ], 64)}
+    <div class="grow" style="text-align:left">
+      ${leg(MACRO_COLORS.protein, 'Protein', pct(pk), pg)}
+      ${leg(MACRO_COLORS.carbs, 'Carbs', pct(ck), cg)}
+      ${leg(MACRO_COLORS.fat, 'Fat', pct(fk), fg)}
+      <div class="leg"><span class="legdot" style="background:none;border:1.5px solid var(--muted)"></span>Fiber · ${fiberG} g</div>
+    </div>
+  </div>`;
+}
 function scoreColor(score) {
   return score >= 80 ? 'var(--green)' : score >= 60 ? 'var(--amber)' : 'var(--red)';
 }
@@ -401,6 +449,7 @@ function renderToday(m) {
       ${scoreBadge(s.score)}
       ${ring(s.calories, target)}
       ${proteinBar(s.protein_mg, s.protein_target_mg)}
+      ${macroRow(s)}
     </div>
     ${hasAny
       ? order.map(([key, label]) => {
@@ -849,23 +898,35 @@ function calorieBars(rows, target) {
   const targetLine = targetY != null ? `<line x1="${pad}" y1="${targetY}" x2="${w - pad}" y2="${targetY}" stroke="var(--muted)" stroke-dasharray="4 3"/>` : '';
   return `<svg viewBox="0 0 ${w} ${h}" class="chart">${targetLine}${bars}</svg>`;
 }
-// proteinBars mirrors calorieBars with the target inverted: protein is a
-// floor, not a ceiling, so bars go green when the target is reached.
-function proteinBars(rows, targetMg) {
+// macroStackBars: per-day grams stacked protein (bottom) / carbs / fat, with
+// the protein target as the dashed line. The value label above each stack is
+// the protein grams, colored to match the bottom segment.
+function macroStackBars(rows, targetMg) {
   const w = 320, h = 150, pad = 16;
-  const grams = rows.map(r => Math.round(r.protein_mg / 1000));
+  const grams = rows.map(r => ({
+    p: Math.round(r.protein_mg / 1000),
+    c: Math.round(r.carbs_mg / 1000),
+    f: Math.round(r.fat_mg / 1000),
+  }));
   const targetG = Math.round((targetMg || 0) / 1000);
-  const maxVal = Math.max(targetG, ...grams, 1) * 1.1;
+  const maxVal = Math.max(targetG, ...grams.map(g => g.p + g.c + g.f), 1) * 1.1;
   const bw = (w - 2 * pad) / rows.length;
+  const scale = v => (v / maxVal) * (h - 2 * pad);
   const bars = rows.map((r, i) => {
     const g = grams[i];
-    const bh = (g / maxVal) * (h - 2 * pad);
-    const x = pad + i * bw;
-    const y = h - pad - bh;
-    const color = targetG > 0 && g >= targetG ? 'var(--green)' : 'var(--primary)';
-    return `<rect x="${x + 1.5}" y="${y}" width="${Math.max(bw - 3, 1)}" height="${Math.max(bh, 1)}" rx="2" fill="${color}" style="cursor:pointer" onclick="jumpToDay('${r.day}')"/>${barValueLabel(g, x, y, bw)}`;
+    if (g.p + g.c + g.f === 0) return '';
+    const x = pad + i * bw, bx = x + 1.5, bwid = Math.max(bw - 3, 1);
+    let yBase = h - pad, segs = '';
+    for (const [key, val] of [['protein', g.p], ['carbs', g.c], ['fat', g.f]]) {
+      if (!val) continue;
+      const sh = Math.max(scale(val), 1);
+      yBase -= sh;
+      segs += `<rect x="${bx}" y="${yBase}" width="${bwid}" height="${sh}" fill="${MACRO_COLORS[key]}" style="cursor:pointer" onclick="jumpToDay('${r.day}')"/>`;
+    }
+    const label = barValueLabel(g.p, x, yBase, bw).replace('fill="var(--muted)"', 'fill="var(--primary)"');
+    return segs + label;
   }).join('');
-  const targetY = targetG > 0 ? h - pad - (targetG / maxVal) * (h - 2 * pad) : null;
+  const targetY = targetG > 0 ? h - pad - scale(targetG) : null;
   const targetLine = targetY != null ? `<line x1="${pad}" y1="${targetY}" x2="${w - pad}" y2="${targetY}" stroke="var(--muted)" stroke-dasharray="4 3"/>` : '';
   return `<svg viewBox="0 0 ${w} ${h}" class="chart">${targetLine}${bars}</svg>`;
 }
@@ -925,8 +986,13 @@ function renderTrends(m) {
       ${calorieBars(merged, S.settings?.calorie_target || 0)}
     </div>
     <div class="card">
-      <h3>Protein</h3>
-      ${proteinBars(merged, S.settings?.protein_target_mg || 0)}
+      <h3>Macros (g)</h3>
+      ${macroStackBars(merged, S.settings?.protein_target_mg || 0)}
+      <div style="display:flex;gap:14px;justify-content:center;margin-top:6px">
+        <span class="leg"><span class="legdot" style="background:${MACRO_COLORS.protein}"></span>Protein</span>
+        <span class="leg"><span class="legdot" style="background:${MACRO_COLORS.carbs}"></span>Carbs</span>
+        <span class="leg"><span class="legdot" style="background:${MACRO_COLORS.fat}"></span>Fat</span>
+      </div>
     </div>
     <div class="card">
       <h3>Weight</h3>

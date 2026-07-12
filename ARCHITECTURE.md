@@ -301,8 +301,11 @@ arithmetic for totals — totals are always recomputed in Go/SQL.
 Colors/typography: clean, large type, thumb-reachable controls; dark mode via
 `prefers-color-scheme`.
 
-- **Today (home).** Top: big calories-remaining ring, protein-to-go bar
-  (progress toward target), quality score badge. Below: the day's meals
+- **Today (home).** Top: big calories-remaining ring (over budget adds an
+  inner red overage ring), protein-to-go bar (progress toward target),
+  quality score badge, and a macro row — small pie of calorie share
+  (protein 4 / carbs 4 / fat 9 kcal per gram) with a legend carrying gram
+  totals plus the fiber total. Below: the day's meals
   grouped by slot, each row tappable to edit. Bottom: an always-visible
   log bar — text input, 🎤 mic button (Web Speech API, copy journal's
   `webkitSpeechRecognition` usage), 📷 camera button (file input without a
@@ -320,8 +323,10 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   (names the meal and saves it as a template). The log bar's ⭐ opens the
   favorites list — tap one to open it as a pre-filled draft (adjust fraction
   chips, Save), ✕ deletes a favorite.
-- **Trends.** Week and Month toggles: per-day bars of calories (colored
-  against target) with score dots and protein line; weight line chart with
+- **Trends.** Week and Month toggles: per-day calorie bars (colored against
+  target, score dot inside the bar top, value label above); a macro stack
+  chart (grams, protein on the bottom, carbs, fat; protein target as the
+  dashed line, protein-gram label above each stack); weight line chart with
   optional goal line; simple inline SVG, no chart library. Month grid follows
   the finance convention of being honest about the in-progress day/month —
   averages count only completed days.
