@@ -40,6 +40,7 @@ func run(log *slog.Logger) error {
 		AnthropicKey  string
 		AIModel       string
 		AIVisionModel string
+		AIWebSearch   bool
 		FDCKey        string
 		R2AccountID   string
 		R2AccessKey   string
@@ -55,6 +56,7 @@ func run(log *slog.Logger) error {
 		AnthropicKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		AIModel:       getEnv("AI_MODEL", ai.DefaultModel),
 		AIVisionModel: getEnv("AI_VISION_MODEL", ai.DefaultVisionModel),
+		AIWebSearch:   getEnv("AI_WEB_SEARCH", "on") != "off",
 		FDCKey:        os.Getenv("FDC_API_KEY"),
 		R2AccountID:   os.Getenv("R2_ACCOUNT_ID"),
 		R2AccessKey:   os.Getenv("R2_ACCESS_KEY_ID"),
@@ -110,7 +112,7 @@ func run(log *slog.Logger) error {
 		client := ai.NewClient(cfg.AnthropicKey, cfg.AIModel)
 		fdc := nutrition.NewFDCClient(cfg.FDCKey)
 		off := nutrition.NewOFFClient()
-		parser := ai.NewParser(client, fdc, off, cfg.AIVisionModel, log)
+		parser := ai.NewParser(client, fdc, off, cfg.AIVisionModel, cfg.AIWebSearch, log)
 		textParser = parser
 		imageParser = parser
 	}

@@ -67,10 +67,10 @@ var recordMealSchema = json.RawMessage(`{
           "tier_reason": { "type": "string", "description": "Five words or fewer, citing the diet framework." },
           "source": {
             "type": "string",
-            "enum": ["usda", "off", "ai", "label", "manual"],
-            "description": "Where the nutrition numbers came from: usda_search, off_barcode, a photographed label, or your own estimate (ai)."
+            "enum": ["usda", "off", "ai", "label", "manual", "web"],
+            "description": "Where the nutrition numbers came from: usda_search, off_barcode, a photographed label, published nutrition found via web search (web), or your own estimate (ai)."
           },
-          "source_ref": { "type": ["string", "null"], "description": "FDC id or barcode, if applicable." },
+          "source_ref": { "type": ["string", "null"], "description": "FDC id, barcode, or source URL for web results." },
           "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
         },
         "required": [
@@ -86,6 +86,13 @@ var recordMealSchema = json.RawMessage(`{
   },
   "required": ["items", "notes"]
 }`)
+
+// webSearchTool is Anthropic's server-side web search: executed API-side
+// mid-request, so restaurant/chain nutrition can come from the publisher's
+// own pages. MaxUses caps searches per parse.
+func webSearchTool() Tool {
+	return Tool{Type: "web_search_20250305", Name: "web_search", MaxUses: 3}
+}
 
 func tools() []Tool {
 	return []Tool{

@@ -47,10 +47,22 @@ type Parser struct {
 	// capability shows -- a fast model that misreads a barcode logs the wrong
 	// food entirely. Empty means use the client default.
 	visionModel string
+	// webSearch exposes Anthropic's server-side web search to the parse loop
+	// so chain-restaurant items get the chain's published nutrition.
+	webSearch bool
 }
 
-func NewParser(client Messenger, usda USDASearcher, off BarcodeLookuper, visionModel string, log *slog.Logger) *Parser {
-	return &Parser{client: client, usda: usda, off: off, visionModel: visionModel, log: log}
+func NewParser(client Messenger, usda USDASearcher, off BarcodeLookuper, visionModel string, webSearch bool, log *slog.Logger) *Parser {
+	return &Parser{client: client, usda: usda, off: off, visionModel: visionModel, webSearch: webSearch, log: log}
+}
+
+// tools returns the parse loop's tool set, including web search when enabled.
+func (p *Parser) tools() []Tool {
+	ts := tools()
+	if p.webSearch {
+		ts = append(ts, webSearchTool())
+	}
+	return ts
 }
 
 // Progress receives short user-facing status lines ("Looking up “feta
@@ -90,7 +102,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 
 	for round := 0; round < maxToolRounds; round++ {
 		t0 := time.Now()
-		resp, err := p.client.CreateMessage(ctx, Request{Model: model, System: system, Messages: messages, Tools: tools()})
+		resp, err := p.client.CreateMessage(ctx, Request{Model: model, System: system, Messages: messages, Tools: p.tools()})
 		if err != nil {
 			return nil, fmt.Errorf("ai parse round %d: %w", round+1, err)
 		}
@@ -100,6 +112,13 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 		if in, ok := extractRecordMeal(resp.Content); ok {
 			p.log.Info("parse done", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
 			return p.finish(in, resp.Model, messages, cache)
+		}
+
+		// A long-running server tool (web search) pauses the turn; replay the
+		// conversation as-is so the API resumes it.
+		if resp.StopReason == "pause_turn" {
+			emit("Searching the web…")
+			continue
 		}
 
 		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache, emit)
@@ -351,6 +370,11 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message, c
 }
 
 func (p *Parser) systemPrompt(day string) string {
+	webGuidance := ""
+	if p.webSearch {
+		webGuidance = `
+- web_search: for restaurant and chain food ("Five Guys cheeseburger", "Chipotle chicken bowl"), ALWAYS search the web for the chain's published nutrition instead of using usda_search or estimating -- chains publish exact numbers and Jim values accuracy over speed. Also use it for regional or new products with no USDA or barcode match. Set source to "web" and source_ref to the URL the numbers came from.`
+	}
 	return fmt.Sprintf(`You are the meal-parsing assistant for Jim's personal food and weight tracker. You turn a casual description (typed, dictated, or from a photo) of what he ate into structured, nutrition-grounded meal items. This is a one-shot parse, not a conversation: never ask a clarifying question, just make the most reasonable assumption and say so in notes.
 
 Jim is logging this meal for day: %s.
@@ -372,7 +396,7 @@ UNITS -- integers only, never floats, in every numeric field you return
 TOOLS AND ESTIMATION
 - Prefer usda_search for whole foods and common dishes (e.g. "grilled chicken breast", "banana", "brown rice"). Prefer Foundation/SR Legacy results over Branded when both are plausible matches.
 - Batch your lookups: issue every usda_search call (one per item) together in a single response. A typical parse is two turns total -- one batched lookup turn, then record_meal. Only take an extra turn when a first search came back empty or clearly wrong.
-- Don't over-search: at most one usda_search per item, plus at most one reworded retry for the whole meal. For branded packaged products (protein powders, bars, cereals), if the first search has no confident match, estimate from your knowledge of that product's label rather than searching again -- speed matters more than a third search.
+- Don't over-search: at most one usda_search per item, plus at most one reworded retry for the whole meal. For branded packaged products (protein powders, bars, cereals), if the first search has no confident match, estimate from your knowledge of that product's label rather than searching again -- speed matters more than a third search.%s
 - Use off_barcode when barcode digits are visible in a photo or given directly.
 - Estimate from your own knowledge only when a lookup fails, returns nothing useful, or the food is a composite homemade dish that no database entry represents well (e.g. "chicken stir fry with vegetables"). In that case set source to "ai" and use confidence "medium" or "low" as appropriate.
 - For a photographed nutrition label, read the numbers directly off the label and set source to "label".
@@ -391,5 +415,5 @@ PHOTOS -- when the first message includes an image, decide which of these it is 
 FINISHING
 - notes is a glance-line for Jim, not a report: at most one short sentence, and only for something he couldn't guess himself (an unusual portion assumption, ambiguous wording, a failed lookup). When the read was straightforward, return an empty string. Never re-list the items or narrate your process.
 - Never write prose around tool calls. A response that calls a tool -- including record_meal -- must contain ONLY the tool call(s), no text before or after. Nobody reads that text; every token of it just makes the parse slower.
-- Call record_meal exactly once, as your final action, to submit the parsed items.`, day, docs.DietFramework)
+- Call record_meal exactly once, as your final action, to submit the parsed items.`, day, docs.DietFramework, webGuidance)
 }

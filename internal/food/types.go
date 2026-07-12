@@ -29,6 +29,7 @@ const (
 	SourceAI     = "ai"
 	SourceLabel  = "label"
 	SourceManual = "manual"
+	SourceWeb    = "web" // published nutrition found via web search (source_ref = URL)
 )
 
 const (
@@ -56,7 +57,7 @@ var validTiers = map[string]bool{
 	TierHardYes: true, TierSoftYes: true, TierNeutral: true, TierSoftNo: true, TierHardNo: true,
 }
 var validSources = map[string]bool{
-	SourceUSDA: true, SourceOFF: true, SourceAI: true, SourceLabel: true, SourceManual: true,
+	SourceUSDA: true, SourceOFF: true, SourceAI: true, SourceLabel: true, SourceManual: true, SourceWeb: true,
 }
 var validConfidences = map[string]bool{
 	ConfidenceHigh: true, ConfidenceMedium: true, ConfidenceLow: true,

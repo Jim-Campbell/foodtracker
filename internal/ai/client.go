@@ -120,12 +120,16 @@ func UserMessage(blocks ...json.RawMessage) Message {
 	return Message{Role: RoleUser, Content: blocks}
 }
 
-// Tool describes one tool available to the model. InputSchema is a raw JSON
-// Schema object, hand-written (no reflection, no SDK).
+// Tool describes one tool available to the model. Client tools carry a
+// Description and hand-written InputSchema; server tools (executed by
+// Anthropic mid-request, e.g. web search) carry Type and optional MaxUses
+// instead.
 type Tool struct {
+	Type        string          `json:"type,omitempty"` // server tools, e.g. "web_search_20250305"
 	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	MaxUses     int             `json:"max_uses,omitempty"`
 }
 
 // ToolChoice forces or allows tool use. Type is "auto" or "tool"; Name is

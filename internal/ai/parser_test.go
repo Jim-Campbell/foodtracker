@@ -121,7 +121,7 @@ func TestParserToolLoopMechanics(t *testing.T) {
 	usda := &fakeUSDA{results: []nutrition.FDCFood{{FDCID: 1, Description: "Egg, whole, raw"}}}
 	off := &fakeOFF{}
 
-	p := NewParser(messenger, usda, off, "", slog.Default())
+	p := NewParser(messenger, usda, off, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -183,7 +183,7 @@ func TestParserMicrosAttachedServerSide(t *testing.T) {
 		},
 	}}}
 
-	p := NewParser(messenger, usda, &fakeOFF{}, "", slog.Default())
+	p := NewParser(messenger, usda, &fakeOFF{}, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -209,6 +209,57 @@ func TestParserMicrosAttachedServerSide(t *testing.T) {
 	// ...while the returned item carries the full payload as micros.
 	if !strings.Contains(string(result.Items[0].Micros), "Vitamin B-12") {
 		t.Errorf("Micros = %s, want the cached full nutrient payload attached server-side", result.Items[0].Micros)
+	}
+}
+
+// TestParserPauseTurnResumes: a server tool (web search) can pause the turn;
+// the loop must replay the conversation as-is -- appending the assistant
+// content but no user message -- so the API resumes the search.
+func TestParserPauseTurnResumes(t *testing.T) {
+	serverToolBlock, _ := json.Marshal(map[string]any{
+		"type": "server_tool_use", "id": "st1", "name": "web_search",
+		"input": map[string]string{"query": "five guys cheeseburger nutrition"},
+	})
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "pause_turn", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{serverToolBlock},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) { it.Source = food.SourceWeb })},
+			})},
+		},
+	}}
+
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", true, slog.Default())
+	result, err := p.ParseText(context.Background(), "5 guys standard burger", "2026-07-07", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	if result.Items[0].Source != food.SourceWeb {
+		t.Errorf("Source = %q, want web", result.Items[0].Source)
+	}
+
+	// First call must offer the web_search server tool.
+	var hasWeb bool
+	for _, tool := range messenger.calls[0].Tools {
+		if tool.Type == "web_search_20250305" {
+			hasWeb = true
+		}
+	}
+	if !hasWeb {
+		t.Error("first request did not include the web_search server tool")
+	}
+
+	// The resumed call replays [user, assistant] with no injected user text.
+	second := messenger.calls[1].Messages
+	if len(second) != 2 {
+		t.Fatalf("resumed call has %d messages, want 2 (original user + paused assistant)", len(second))
+	}
+	if second[1].Role != RoleAssistant || string(second[1].Content[0]) != string(json.RawMessage(serverToolBlock)) {
+		t.Errorf("paused assistant turn was not replayed byte-for-byte")
 	}
 }
 
@@ -238,7 +289,7 @@ func TestParserPreservesUnmodeledBlocks(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", true, slog.Default())
 	if _, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil); err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}
@@ -274,7 +325,7 @@ func TestParserRoundCapForcesRecordMeal(t *testing.T) {
 	usda := &fakeUSDA{}
 	off := &fakeOFF{}
 
-	p := NewParser(messenger, usda, off, "", slog.Default())
+	p := NewParser(messenger, usda, off, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "some mystery food", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -304,7 +355,7 @@ func TestParserImageMessageShape(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "claude-sonnet-5", slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "claude-sonnet-5", true, slog.Default())
 	imageBytes := []byte("fake-png-bytes")
 	result, err := p.ParseImage(context.Background(), imageBytes, "image/png", "I had half of this", "2026-07-07", nil)
 	if err != nil {
@@ -374,7 +425,7 @@ func TestParserValidationWiring(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "some carby thing", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)

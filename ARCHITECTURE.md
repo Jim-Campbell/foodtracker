@@ -272,6 +272,11 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
     (`internal/nutrition/off.go`).
   - `record_meal(items, notes)` → terminal tool; ends the loop and yields the
     draft.
+  - `web_search` (Anthropic's server tool, executed API-side; `AI_WEB_SEARCH=off`
+    disables) → for restaurant/chain food the prompt requires searching the
+    chain's published nutrition instead of USDA or estimating; items get
+    `source: "web"` with the URL in `source_ref`. A `pause_turn` stop reason
+    is resumed by replaying the conversation unchanged.
 - Vision parses (`/api/analyze-photo`) put the image (fetched from R2, base64)
   in the first user message with the hint text. Same loop; Claude may read a
   nutrition label directly (source `label`) or extract barcode digits and call
@@ -343,7 +348,8 @@ Required: `DATABASE_URL`, `FOOD_API_KEY`, `ANTHROPIC_API_KEY`, `FDC_API_KEY`.
 Optional: `PORT` (default 8082), `AI_MODEL` (default `claude-sonnet-5`; text
 parses), `AI_VISION_MODEL` (default `claude-sonnet-5`; photo parses stay on
 Sonnet even when `AI_MODEL` is Haiku — vision OCR like barcode digits is
-where smaller models misread),
+where smaller models misread), `AI_WEB_SEARCH` (default on; `off` disables
+the web-search tool),
 `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
 `R2_PUBLIC_URL` (photo features disabled until all five are set — the PWA
 hides the camera button when `/api/health` reports `photos: false`).
