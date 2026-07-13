@@ -121,8 +121,10 @@ input[type=text], input[type=number], input[type=date] {
 .dtot { font-size: .95rem; text-align: center; }
 /* bottom bar */
 #bottomBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 8; background: var(--card); border-top: 1px solid var(--line); }
-#logbar { display: none; align-items: center; gap: 6px; padding: 10px 10px 8px; }
-#logbar input[type=text] { flex: 1; padding: 11px 12px; border: 1px solid var(--line); border-radius: 20px; background: var(--bg); color: var(--text); }
+#logbar { display: none; align-items: flex-end; gap: 6px; padding: 10px 10px 8px; }
+/* textarea so dictated text stays fully visible while correcting: grows to
+   ~4 lines (autoGrowLogInput), then scrolls */
+#logbar textarea { flex: 1; padding: 11px 12px; border: 1px solid var(--line); border-radius: 20px; background: var(--bg); color: var(--text); font-size: 16px; font-family: inherit; resize: none; overflow-y: auto; line-height: 1.35; height: 44px; }
 .iconbtn { border: none; background: var(--chip); color: var(--text); width: 42px; height: 42px; border-radius: 50%; font-size: 1.15rem; cursor: pointer; flex-shrink: 0; }
 .iconbtn.on { background: var(--red); color: #fff; }
 .iconbtn.primary { background: var(--primary); color: #fff; }
@@ -479,6 +481,7 @@ function initSpeech() {
     }
     if (final) { micBase += final; usedMicForCurrent = true; }
     $('#logInput').value = (micBase + interim).trim();
+    autoGrowLogInput();
   };
   recognition.onerror = (e) => {
     stopMic();
@@ -497,12 +500,20 @@ function stopMic() {
   $('#micBtn')?.classList.remove('on');
   try { recognition.stop(); } catch {}
 }
+// Grows the log textarea with its content (up to ~4 lines, then scrolls).
+// Call after programmatic value changes too -- oninput only fires for typing.
+function autoGrowLogInput() {
+  const el = $('#logInput');
+  if (!el) return;
+  el.style.height = '44px';
+  el.style.height = Math.min(el.scrollHeight, 116) + 'px';
+}
 function buildLogBar() {
   const el = $('#logbar');
   const micBtn = SUPPORTS_SPEECH ? `<button class="iconbtn" id="micBtn" onclick="toggleMic()" title="Voice">🎤</button>` : '';
   const camBtn = S.health.photos ? `<button class="iconbtn" onclick="photoChooser()" title="Photo">📷</button>` : '';
   el.innerHTML = `
-    <input type="text" id="logInput" placeholder="What did you eat?" onkeydown="if(event.key==='Enter')submitText()">
+    <textarea id="logInput" rows="1" placeholder="What did you eat?" oninput="autoGrowLogInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitText()}"></textarea>
     ${micBtn}${camBtn}
     <button class="iconbtn" onclick="openFavorites()" title="Favorites">⭐</button>
     <button class="iconbtn" onclick="weightDialog()" title="Log weight">⚖️</button>
@@ -529,6 +540,7 @@ async function submitText() {
   const el = $('#logInput'); const text = el.value.trim();
   if (!text) return;
   el.value = '';
+  autoGrowLogInput();
   const kind = usedMicForCurrent ? 'voice' : 'text';
   usedMicForCurrent = false; micBase = '';
   await runParse(() => apiStream('/parse', { text, day: S.day }, setSpinnerStatus), { input_kind: kind, description: text });
@@ -568,6 +580,7 @@ function onPhotoSelected(file) {
       <button class="btn primary" onclick="analyzePendingPhoto()">Analyze</button>
     </div>`);
   hintInput.value = '';
+  autoGrowLogInput();
 }
 async function analyzePendingPhoto() {
   const file = PENDING_PHOTO;
