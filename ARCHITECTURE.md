@@ -322,9 +322,10 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   list with name, grams, calories, macros; per-item fraction chips
   (¼ ½ ¾ All) and a whole-meal fraction row; delete-item ✕; editable grams
   (recompute proportionally client-side: nutrition scales linearly with
-  grams). Save → POST /api/meals → Today refreshes. Photos: client-side
-  canvas downscale to ≤1600px JPEG before upload, then analyze with the hint
-  text from the input box.
+  grams). Save → POST /api/meals → Today refreshes. Photos: picking a shot
+  opens a hint step (photo preview + optional free-text hint, pre-filled from
+  the log input) before Analyze; then client-side canvas downscale to ≤1600px
+  JPEG, upload, and the vision parse with the hint.
 - **Duplicate & favorites.** The edit dialog offers ⧉ Duplicate (opens a new
   draft with the same items for the currently viewed day) and ☆ Favorite
   (names the meal and saves it as a template). The log bar's ⭐ opens the

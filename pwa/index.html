@@ -550,12 +550,30 @@ function downscaleImage(file, maxEdge, quality) {
     img.src = url;
   });
 }
-async function onPhotoSelected(file) {
+// Photo flow pauses on a hint step: the shot plus an optional free-text hint
+// ("I ate half", "just the salmon", "the whole box") before analysis. Any
+// text already in the log bar pre-fills the hint.
+let PENDING_PHOTO = null;
+function onPhotoSelected(file) {
   if (!file) return;
   if (micOn) stopMic();
   const hintInput = $('#logInput');
-  const hint = hintInput.value.trim();
+  PENDING_PHOTO = file;
+  openDialog(`<h2>Analyze photo</h2>
+    <img class="dphoto" src="${URL.createObjectURL(file)}" onclick="this.classList.toggle('full')">
+    <label class="f">Hint (optional)</label>
+    <input type="text" id="photoHint" placeholder="e.g. 'I ate half' or 'just the salmon'" value="${esc(hintInput.value.trim())}" onkeydown="if(event.key==='Enter')analyzePendingPhoto()">
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="PENDING_PHOTO=null;closeDialog()">Cancel</button>
+      <button class="btn primary" onclick="analyzePendingPhoto()">Analyze</button>
+    </div>`);
   hintInput.value = '';
+}
+async function analyzePendingPhoto() {
+  const file = PENDING_PHOTO;
+  if (!file) return;
+  PENDING_PHOTO = null;
+  const hint = $('#photoHint').value.trim();
   showSpinnerDialog('Analyzing photo…');
   try {
     const blob = await downscaleImage(file, 1600, 0.8);
