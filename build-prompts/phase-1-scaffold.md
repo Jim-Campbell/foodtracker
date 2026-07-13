@@ -19,7 +19,7 @@ Copy structure and idioms from the sibling apps rather than inventing:
 
 ## Tasks
 
-1. `go mod init github.com/jimgcampbell/food` (Go 1.24). Dependencies:
+1. `go mod init github.com/jimgcampbell/food` (Go 1.25). Dependencies:
    `github.com/go-chi/chi/v5`, `github.com/jackc/pgx/v5`. Nothing else yet.
 2. `cmd/server/main.go`: read env per ARCHITECTURE.md → Environment
    (`DATABASE_URL` and `FOOD_API_KEY` required — fail fast with a clear
@@ -36,7 +36,7 @@ Copy structure and idioms from the sibling apps rather than inventing:
    returning `{"ok":true,"photos":false,"ai":false}` (booleans reflect whether
    the R2 / Anthropic env vars are set); serve `pwa/` at `/` (placeholder
    `pwa/index.html` that just says "food app" is fine).
-5. `Dockerfile` (multi-stage `golang:1.24-alpine` builder with
+5. `Dockerfile` (multi-stage `golang:1.25-alpine` builder with
    `GOTOOLCHAIN=local` → `alpine` runtime, copy `pwa/` into the image),
    `.gitignore` (binaries, `.env`).
 6. `.env.example` listing every env var from ARCHITECTURE.md with comments.
