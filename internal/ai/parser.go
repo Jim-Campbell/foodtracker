@@ -301,9 +301,13 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache micr
 	product, err := p.off.Lookup(ctx, in.Code)
 	if err != nil {
 		p.log.Warn("off_barcode lookup failed", "code", in.Code, "dur_ms", time.Since(t0).Milliseconds(), "error", err)
+		fallback := "identify the product from the package's printed TEXT (brand name, product name, website) -- never from the food artwork on the label"
+		if p.webSearch {
+			fallback = "identify the product from the package's printed TEXT (brand name, product name, website -- never the food artwork) and use web_search to find its published nutrition"
+		}
 		return ToolResultBlock(block.ID, fmt.Sprintf(
-			"off_barcode found nothing for %q: %v -- barcode digits are easy to misread. Re-read the printed numerals under the bars digit by digit (UPC-A has 12) and try off_barcode ONCE more if you read them differently. If it still fails, identify the product from the package's printed TEXT (brand name, product name, website) -- never from the food artwork on the label.",
-			in.Code, err), true)
+			"off_barcode found nothing for %q: %v -- barcode digits are easy to misread. Re-read the printed numerals under the bars digit by digit (UPC-A has 12) and try off_barcode ONCE more if you read them differently. If it still fails, %s.",
+			in.Code, err, fallback), true)
 	}
 	p.log.Info("off_barcode", "code", in.Code, "dur_ms", time.Since(t0).Milliseconds())
 	if len(product.RawNutriments) > 0 {
@@ -370,10 +374,16 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message, c
 }
 
 func (p *Parser) systemPrompt(day string) string {
-	webGuidance := ""
+	// The branded-product fallback depends on whether web search is available:
+	// with it, escalate to the brand's published nutrition; without it, an
+	// estimate is the best remaining option.
+	webGuidance := `
+- For branded packaged products (protein powders, bars, cereals), if the first search has no confident match, estimate from your knowledge of that product's label rather than searching USDA again.`
 	if p.webSearch {
 		webGuidance = `
-- web_search: for restaurant and chain food ("Five Guys cheeseburger", "Chipotle chicken bowl"), ALWAYS search the web for the chain's published nutrition instead of using usda_search or estimating -- chains publish exact numbers and Jim values accuracy over speed. Also use it for regional or new products with no USDA or barcode match. Set source to "web" and source_ref to the URL the numbers came from.`
+- Restaurants and chains ("Five Guys cheeseburger", "Chipotle chicken bowl"): skip usda_search and use web_search directly for the chain's published nutrition -- chains publish exact numbers.
+- Any other brand name (packaged goods, store brands, local restaurants, bakery items): if usda_search has no confident match for the specific product, use web_search to find the brand's published nutrition BEFORE falling back to an estimate -- Jim values accuracy over speed. Estimate only when the web has nothing authoritative either.
+- For every web-sourced item set source to "web" and source_ref to the URL the numbers came from.`
 	}
 	return fmt.Sprintf(`You are the meal-parsing assistant for Jim's personal food and weight tracker. You turn a casual description (typed, dictated, or from a photo) of what he ate into structured, nutrition-grounded meal items. This is a one-shot parse, not a conversation: never ask a clarifying question, just make the most reasonable assumption and say so in notes.
 
@@ -396,7 +406,7 @@ UNITS -- integers only, never floats, in every numeric field you return
 TOOLS AND ESTIMATION
 - Prefer usda_search for whole foods and common dishes (e.g. "grilled chicken breast", "banana", "brown rice"). Prefer Foundation/SR Legacy results over Branded when both are plausible matches.
 - Batch your lookups: issue every usda_search call (one per item) together in a single response. A typical parse is two turns total -- one batched lookup turn, then record_meal. Only take an extra turn when a first search came back empty or clearly wrong.
-- Don't over-search: at most one usda_search per item, plus at most one reworded retry for the whole meal. For branded packaged products (protein powders, bars, cereals), if the first search has no confident match, estimate from your knowledge of that product's label rather than searching again -- speed matters more than a third search.%s
+- Don't over-search USDA: at most one usda_search per item, plus at most one reworded retry for the whole meal.%s
 - Use off_barcode when barcode digits are visible in a photo or given directly.
 - Estimate from your own knowledge only when a lookup fails, returns nothing useful, or the food is a composite homemade dish that no database entry represents well (e.g. "chicken stir fry with vegetables"). In that case set source to "ai" and use confidence "medium" or "low" as appropriate.
 - For a photographed nutrition label, read the numbers directly off the label and set source to "label".

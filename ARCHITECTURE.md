@@ -273,10 +273,12 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
   - `record_meal(items, notes)` → terminal tool; ends the loop and yields the
     draft.
   - `web_search` (Anthropic's server tool, executed API-side; `AI_WEB_SEARCH=off`
-    disables) → for restaurant/chain food the prompt requires searching the
-    chain's published nutrition instead of USDA or estimating; items get
-    `source: "web"` with the URL in `source_ref`. A `pause_turn` stop reason
-    is resumed by replaying the conversation unchanged.
+    disables) → chains/restaurants skip USDA and use the published nutrition
+    directly; any other brand name (packaged goods, store brands, local
+    items) escalates to web search when USDA has no confident match, before
+    any estimate. Items get `source: "web"` with the URL in `source_ref`.
+    A `pause_turn` stop reason is resumed by replaying the conversation
+    unchanged.
 - Vision parses (`/api/analyze-photo`) put the image (fetched from R2, base64)
   in the first user message with the hint text. Same loop; Claude may read a
   nutrition label directly (source `label`) or extract barcode digits and call
