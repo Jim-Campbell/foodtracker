@@ -427,12 +427,21 @@ function mealCalories(m) {
 function mealProtein(m) {
   return (m.items || []).reduce((s, i) => s + Math.round(i.protein_mg * i.fraction_pct / 100 / 1000), 0);
 }
+function mealCarbs(m) {
+  return (m.items || []).reduce((s, i) => s + Math.round(i.carbs_mg * i.fraction_pct / 100 / 1000), 0);
+}
+function mealFat(m) {
+  return (m.items || []).reduce((s, i) => s + Math.round(i.fat_mg * i.fraction_pct / 100 / 1000), 0);
+}
+function macroSummary(cal, p, c, f) {
+  return `${cal} cal · ${p}g protein · ${c}g carbs · ${f}g fat`;
+}
 function mealRow(m) {
   // onerror: a photo that can't load (misconfigured R2 public URL, deleted
   // object) hides itself instead of showing the browser's broken-image icon.
   const thumb = m.photo_url ? `<img class="thumb" src="${esc(m.photo_url)}" onerror="this.remove()">` : '';
   const star = matchingFavorite(m.items) ? ' <span title="Favorited">★</span>' : '';
-  return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}${star}</div><div class="s">${mealCalories(m)} cal · ${mealProtein(m)} g protein</div></div></div>`;
+  return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}${star}</div><div class="s">${macroSummary(mealCalories(m), mealProtein(m), mealCarbs(m), mealFat(m))}</div></div></div>`;
 }
 function renderToday(m) {
   const s = S.summary;
@@ -459,7 +468,9 @@ function renderToday(m) {
         if (!slotMeals.length) return '';
         const cal = slotMeals.reduce((s, x) => s + mealCalories(x), 0);
         const p = slotMeals.reduce((s, x) => s + mealProtein(x), 0);
-        return `<div class="card"><div class="slothead"><h3>${label}</h3><span class="slotsum">${cal} cal · ${p} g protein</span></div>${slotMeals.map(mealRow).join('')}</div>`;
+        const c = slotMeals.reduce((s, x) => s + mealCarbs(x), 0);
+        const f = slotMeals.reduce((s, x) => s + mealFat(x), 0);
+        return `<div class="card"><div class="slothead"><h3>${label}</h3><span class="slotsum">${macroSummary(cal, p, c, f)}</span></div>${slotMeals.map(mealRow).join('')}</div>`;
       }).join('')
       : '<div class="empty">No meals logged yet</div>'}
   `;
@@ -646,14 +657,16 @@ function favTotals(items) {
     const f = it.fraction_pct / 100;
     t.cal += Math.round(it.calories * f);
     t.p += Math.round(it.protein_mg * f / 1000);
+    t.c += Math.round(it.carbs_mg * f / 1000);
+    t.f += Math.round(it.fat_mg * f / 1000);
     return t;
-  }, { cal: 0, p: 0 });
+  }, { cal: 0, p: 0, c: 0, f: 0 });
 }
 function renderFavorites() {
   const rows = S.favorites.map(f => {
     const t = favTotals(f.items);
     return `<div class="row" onclick="logFavorite(${f.id})">
-      <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${t.cal} cal · ${t.p} g protein</div></div>
+      <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${macroSummary(t.cal, t.p, t.c, t.f)}</div></div>
       <button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();renameFavorite(${f.id})" title="Rename favorite">✏️</button>
       <button class="lk" onclick="event.stopPropagation();removeFavorite(${f.id})" title="Delete favorite">✕</button>
     </div>`;
@@ -747,8 +760,10 @@ function itemTotals(items) {
     const f = it.fraction_pct / 100;
     t.cal += Math.round(it.calories * f);
     t.protein += Math.round(it.protein_mg * f / 1000);
+    t.carbs += Math.round(it.carbs_mg * f / 1000);
+    t.fat += Math.round(it.fat_mg * f / 1000);
     return t;
-  }, { cal: 0, protein: 0 });
+  }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
 }
 function fracChips(it, idx) {
   const cur = it ? it.fraction_pct : null;
@@ -817,7 +832,7 @@ function draftDialogHTML() {
     </div>`;
     })() : ''}
     <div class="dfoot">
-      <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein} g protein</div>
+      <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein}g protein · ${totals.carbs}g carbs · ${totals.fat}g fat</div>
       <div class="dlg-actions">
         ${DRAFT.mode === 'edit' ? `<button class="btn danger" onclick="deleteMealConfirm(${DRAFT.id})">Delete</button>` : ''}
         <button class="btn ghost" onclick="closeDialog()">Cancel</button>
