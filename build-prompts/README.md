@@ -54,3 +54,23 @@ choices benefit from your taste ("that preview card is too busy") in the loop.
 
 Nothing in phases 1–4 requires the PWA; test with `curl`. Phase 5 is the
 biggest single prompt — budget a long session for it.
+
+## Exercise expansion (post-launch feature)
+
+Adds cardio / strength / yoga / meditation tracking alongside food. Same rules:
+run strictly sequentially, one fresh session per phase, gate with
+`go build ./... && go test ./...` + the phase's acceptance checklist + a clean
+commit. Design is settled in the prototype artifact
+(<https://claude.ai/code/artifact/63d7ec19-4c72-4e71-b15f-5ab2f05db913>) and
+`memory/exercise-tracking-expansion.md` — the prompts are execution work.
+
+| Phase | File | Delivers |
+|---|---|---|
+| E1 | exercise-1-data-api.md | `exercise_sessions` schema, weekly targets, Store/service/API, tests |
+| E2 | exercise-2-home-logging.md | Today Training card, tap-log sheets, cross-week "last:", Settings targets |
+| E3 | exercise-3-trends.md | Trends → Food·Training view: weekly-minutes stack + strength row + mixes |
+| E4 | exercise-4-nl-logging.md | Log bar understands workout phrases (`log_exercise` terminal tool) |
+
+E1 is curl-testable with no PWA. E3 and E4 both depend on E1–E2 but not on each
+other. Exercise never touches the calorie budget — that separation is an
+invariant every phase must preserve.
