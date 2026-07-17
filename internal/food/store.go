@@ -28,4 +28,11 @@ type Store interface {
 
 	ListAllMeals(ctx context.Context) ([]Meal, error)
 	ListAllWeights(ctx context.Context) ([]Weight, error)
+
+	CreateExercise(ctx context.Context, e *ExerciseSession) error
+	GetExercise(ctx context.Context, id int64) (*ExerciseSession, error)
+	UpdateExercise(ctx context.Context, e *ExerciseSession) error
+	DeleteExercise(ctx context.Context, id int64) error
+	ListExerciseRange(ctx context.Context, start, end string) ([]ExerciseSession, error)
+	ListAllExercise(ctx context.Context) ([]ExerciseSession, error)
 }

@@ -48,6 +48,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Put("/settings", h.updateSettings)
 
 	r.Get("/export", h.export)
+
+	h.exerciseRoutes(r)
 }
 
 // ---- meals ----

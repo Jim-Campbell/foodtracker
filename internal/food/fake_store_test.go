@@ -6,6 +6,7 @@ import (
 )
 
 var errNotFoundFavorite = errors.New("not found: favorite")
+var errNotFoundExercise = errors.New("not found: exercise session")
 
 // fakeStore is an in-memory food.Store for service-level tests.
 type fakeStore struct {
@@ -15,14 +16,20 @@ type fakeStore struct {
 	settings  Settings
 	favorites map[int64]*Favorite
 	nextFavID int64
+	exercise  map[int64]*ExerciseSession
+	nextExID  int64
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		meals:     map[int64]*Meal{},
-		weights:   map[string]Weight{},
-		settings:  Settings{CalorieTarget: 1800, ProteinTargetMg: 165000},
+		meals:   map[int64]*Meal{},
+		weights: map[string]Weight{},
+		settings: Settings{
+			CalorieTarget: 1800, ProteinTargetMg: 165000,
+			CardioWeeklyTarget: 3, StrengthWeeklyTarget: 2, YogaWeeklyTarget: 2, MeditationWeeklyDays: 7,
+		},
 		favorites: map[int64]*Favorite{},
+		exercise:  map[int64]*ExerciseSession{},
 	}
 }
 
@@ -189,6 +196,58 @@ func (f *fakeStore) RangeSummary(ctx context.Context, start, end string) ([]Rang
 			rd.Score = &score
 		}
 		out = append(out, rd)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) CreateExercise(ctx context.Context, e *ExerciseSession) error {
+	f.nextExID++
+	e.ID = f.nextExID
+	cp := *e
+	f.exercise[e.ID] = &cp
+	return nil
+}
+
+func (f *fakeStore) GetExercise(ctx context.Context, id int64) (*ExerciseSession, error) {
+	e, ok := f.exercise[id]
+	if !ok {
+		return nil, nil
+	}
+	cp := *e
+	return &cp, nil
+}
+
+func (f *fakeStore) UpdateExercise(ctx context.Context, e *ExerciseSession) error {
+	if _, ok := f.exercise[e.ID]; !ok {
+		return errNotFoundExercise
+	}
+	cp := *e
+	f.exercise[e.ID] = &cp
+	return nil
+}
+
+func (f *fakeStore) DeleteExercise(ctx context.Context, id int64) error {
+	if _, ok := f.exercise[id]; !ok {
+		return errNotFoundExercise
+	}
+	delete(f.exercise, id)
+	return nil
+}
+
+func (f *fakeStore) ListExerciseRange(ctx context.Context, start, end string) ([]ExerciseSession, error) {
+	var out []ExerciseSession
+	for _, e := range f.exercise {
+		if e.Day >= start && e.Day <= end {
+			out = append(out, *e)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListAllExercise(ctx context.Context) ([]ExerciseSession, error) {
+	var out []ExerciseSession
+	for _, e := range f.exercise {
+		out = append(out, *e)
 	}
 	return out, nil
 }

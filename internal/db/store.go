@@ -358,9 +358,13 @@ func (d *DB) DeleteWeight(ctx context.Context, day string) error {
 func (d *DB) GetSettings(ctx context.Context) (*food.Settings, error) {
 	s := &food.Settings{}
 	err := d.pool.QueryRow(ctx, `
-		SELECT calorie_target, protein_target_mg, weight_target_g, updated_at
+		SELECT calorie_target, protein_target_mg, weight_target_g,
+		       cardio_weekly_target, strength_weekly_target, yoga_weekly_target, meditation_weekly_days,
+		       updated_at
 		FROM settings WHERE id = 1`).
-		Scan(&s.CalorieTarget, &s.ProteinTargetMg, &s.WeightTargetG, &s.UpdatedAt)
+		Scan(&s.CalorieTarget, &s.ProteinTargetMg, &s.WeightTargetG,
+			&s.CardioWeeklyTarget, &s.StrengthWeeklyTarget, &s.YogaWeeklyTarget, &s.MeditationWeeklyDays,
+			&s.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get settings: %w", err)
 	}
@@ -369,8 +373,12 @@ func (d *DB) GetSettings(ctx context.Context) (*food.Settings, error) {
 
 func (d *DB) UpdateSettings(ctx context.Context, s *food.Settings) error {
 	_, err := d.pool.Exec(ctx, `
-		UPDATE settings SET calorie_target = $1, protein_target_mg = $2, weight_target_g = $3, updated_at = NOW()
-		WHERE id = 1`, s.CalorieTarget, s.ProteinTargetMg, s.WeightTargetG)
+		UPDATE settings SET calorie_target = $1, protein_target_mg = $2, weight_target_g = $3,
+		    cardio_weekly_target = $4, strength_weekly_target = $5, yoga_weekly_target = $6, meditation_weekly_days = $7,
+		    updated_at = NOW()
+		WHERE id = 1`,
+		s.CalorieTarget, s.ProteinTargetMg, s.WeightTargetG,
+		s.CardioWeeklyTarget, s.StrengthWeeklyTarget, s.YogaWeeklyTarget, s.MeditationWeeklyDays)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)
 	}
@@ -475,4 +483,94 @@ func (d *DB) RangeSummary(ctx context.Context, start, end string) ([]food.RangeD
 		}
 	}
 	return days, nil
+}
+
+// ---- exercise ----
+
+func (d *DB) CreateExercise(ctx context.Context, e *food.ExerciseSession) error {
+	var day time.Time
+	err := d.pool.QueryRow(ctx, `
+		INSERT INTO exercise_sessions (day, type, activity, location, style, duration_min, note, input_kind, ai_raw)
+		VALUES ($1::date,$2,$3,$4,$5,$6,$7,$8,$9)
+		RETURNING id, day, performed_at, created_at, updated_at`,
+		e.Day, e.Type, e.Activity, e.Location, e.Style, e.DurationMin, e.Note, e.InputKind, nullableRaw(e.AIRaw)).
+		Scan(&e.ID, &day, &e.PerformedAt, &e.CreatedAt, &e.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("insert exercise session: %w", err)
+	}
+	e.Day = day.Format("2006-01-02")
+	return nil
+}
+
+func (d *DB) GetExercise(ctx context.Context, id int64) (*food.ExerciseSession, error) {
+	sessions, err := d.queryExercise(ctx, "id = $1", []any{id})
+	if err != nil {
+		return nil, err
+	}
+	if len(sessions) == 0 {
+		return nil, nil
+	}
+	return &sessions[0], nil
+}
+
+func (d *DB) UpdateExercise(ctx context.Context, e *food.ExerciseSession) error {
+	tag, err := d.pool.Exec(ctx, `
+		UPDATE exercise_sessions SET day=$1::date, type=$2, activity=$3, location=$4, style=$5,
+		    duration_min=$6, note=$7, input_kind=$8, ai_raw=$9, updated_at=NOW()
+		WHERE id=$10`,
+		e.Day, e.Type, e.Activity, e.Location, e.Style, e.DurationMin, e.Note, e.InputKind, nullableRaw(e.AIRaw), e.ID)
+	if err != nil {
+		return fmt.Errorf("update exercise session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("exercise session not found")
+	}
+	return nil
+}
+
+func (d *DB) DeleteExercise(ctx context.Context, id int64) error {
+	_, err := d.pool.Exec(ctx, "DELETE FROM exercise_sessions WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("delete exercise session: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) ListExerciseRange(ctx context.Context, start, end string) ([]food.ExerciseSession, error) {
+	return d.queryExercise(ctx, "day BETWEEN $1::date AND $2::date", []any{start, end})
+}
+
+// ListAllExercise returns every session, ordered by day, for export.
+func (d *DB) ListAllExercise(ctx context.Context) ([]food.ExerciseSession, error) {
+	return d.queryExercise(ctx, "TRUE", nil)
+}
+
+func (d *DB) queryExercise(ctx context.Context, where string, args []any) ([]food.ExerciseSession, error) {
+	rows, err := d.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id, day, performed_at, type, activity, location, style, duration_min,
+		       note, input_kind, ai_raw, created_at, updated_at
+		FROM exercise_sessions
+		WHERE %s
+		ORDER BY day, performed_at`, where), args...)
+	if err != nil {
+		return nil, fmt.Errorf("query exercise sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []food.ExerciseSession
+	for rows.Next() {
+		var e food.ExerciseSession
+		var day time.Time
+		var aiRaw []byte
+		if err := rows.Scan(&e.ID, &day, &e.PerformedAt, &e.Type, &e.Activity, &e.Location, &e.Style, &e.DurationMin,
+			&e.Note, &e.InputKind, &aiRaw, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan exercise session: %w", err)
+		}
+		e.Day = day.Format("2006-01-02")
+		if aiRaw != nil {
+			e.AIRaw = json.RawMessage(aiRaw)
+		}
+		sessions = append(sessions, e)
+	}
+	return sessions, rows.Err()
 }

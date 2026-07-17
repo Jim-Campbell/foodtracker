@@ -53,6 +53,28 @@ const (
 	SlotSnack     = "snack"
 )
 
+// Exercise types and input kinds. Exercise never touches the calorie budget.
+const (
+	ExerciseCardio     = "cardio"
+	ExerciseStrength   = "strength"
+	ExerciseYoga       = "yoga"
+	ExerciseMeditation = "meditation"
+)
+
+const (
+	ExerciseInputTap    = "tap"
+	ExerciseInputText   = "text"
+	ExerciseInputVoice  = "voice"
+	ExerciseInputImport = "import"
+)
+
+var validExerciseTypes = map[string]bool{
+	ExerciseCardio: true, ExerciseStrength: true, ExerciseYoga: true, ExerciseMeditation: true,
+}
+var validExerciseInputKinds = map[string]bool{
+	ExerciseInputTap: true, ExerciseInputText: true, ExerciseInputVoice: true, ExerciseInputImport: true,
+}
+
 var validTiers = map[string]bool{
 	TierHardYes: true, TierSoftYes: true, TierNeutral: true, TierSoftNo: true, TierHardNo: true,
 }
@@ -123,10 +145,35 @@ type Weight struct {
 
 // Settings is the single-row (id=1) app configuration.
 type Settings struct {
-	CalorieTarget   int       `json:"calorie_target"`
-	ProteinTargetMg int64     `json:"protein_target_mg"`
-	WeightTargetG   *int      `json:"weight_target_g,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at,omitempty"`
+	CalorieTarget        int       `json:"calorie_target"`
+	ProteinTargetMg      int64     `json:"protein_target_mg"`
+	WeightTargetG        *int      `json:"weight_target_g,omitempty"`
+	CardioWeeklyTarget   int       `json:"cardio_weekly_target"`
+	StrengthWeeklyTarget int       `json:"strength_weekly_target"`
+	YogaWeeklyTarget     int       `json:"yoga_weekly_target"`
+	MeditationWeeklyDays int       `json:"meditation_weekly_days"`
+	UpdatedAt            time.Time `json:"updated_at,omitempty"`
+}
+
+// ExerciseSession is one logged workout/practice. Day is a user-chosen date,
+// independent of PerformedAt, exactly like Meal.Day. Fully separate from the
+// food/calorie domain — never credits or debits the calorie budget. Multiple
+// sessions per day per type are normal (yoga twice, a hike after a swim);
+// saves always append, never upsert.
+type ExerciseSession struct {
+	ID          int64           `json:"id"`
+	Day         string          `json:"day"` // YYYY-MM-DD
+	PerformedAt time.Time       `json:"performed_at"`
+	Type        string          `json:"type"`
+	Activity    *string         `json:"activity,omitempty"`
+	Location    *string         `json:"location,omitempty"`
+	Style       *string         `json:"style,omitempty"`
+	DurationMin *int            `json:"duration_min,omitempty"`
+	Note        string          `json:"note"`
+	InputKind   string          `json:"input_kind"`
+	AIRaw       json.RawMessage `json:"ai_raw,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // DaySummary is the as-eaten totals and quality score for one day, plus the
@@ -180,9 +227,10 @@ type Favorite struct {
 // ExportDoc is the full-database backup returned by GET /api/export — the
 // backup story for Render's ephemeral disk. Meals are ordered by day.
 type ExportDoc struct {
-	ExportedAt time.Time  `json:"exported_at"`
-	Settings   Settings   `json:"settings"`
-	Weights    []Weight   `json:"weights"`
-	Meals      []Meal     `json:"meals"`
-	Favorites  []Favorite `json:"favorites"`
+	ExportedAt time.Time         `json:"exported_at"`
+	Settings   Settings          `json:"settings"`
+	Weights    []Weight          `json:"weights"`
+	Meals      []Meal            `json:"meals"`
+	Favorites  []Favorite        `json:"favorites"`
+	Exercise   []ExerciseSession `json:"exercise"`
 }

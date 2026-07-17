@@ -52,6 +52,10 @@ layout. Build-phase prompts live in `build-prompts/`.
   in `meal_items.micros`.
 - Imports of AI numbers are sanity-checked (Atwater ±30% calories-vs-macros
   check) before a draft is shown.
+- **Exercise is completely calorie-independent.** A logged session
+  (`exercise_sessions`) never credits or debits the food budget or touches
+  meal/day-summary math. `duration_min` is integer minutes — no floats, same
+  rule as the food domain.
 
 ## Verifying changes
 

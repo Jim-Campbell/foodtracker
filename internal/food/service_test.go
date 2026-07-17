@@ -141,3 +141,125 @@ func TestServiceRangeSummaryOverTarget(t *testing.T) {
 		t.Error("2026-07-02 should not be over target (1200 < 1800)")
 	}
 }
+
+// ---- exercise ----
+
+func strPtr(s string) *string { return &s }
+func intPtr(i int) *int       { return &i }
+
+func TestServiceCreateExerciseValidSessionsPass(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	cardio := &ExerciseSession{Day: "2026-07-07", Type: ExerciseCardio, Activity: strPtr("Run"), DurationMin: intPtr(32)}
+	if err := svc.CreateExercise(ctx, cardio); err != nil {
+		t.Fatalf("cardio CreateExercise failed: %v", err)
+	}
+
+	yoga := &ExerciseSession{Day: "2026-07-07", Type: ExerciseYoga, Location: strPtr("Studio"), Style: strPtr("Vinyasa"), DurationMin: intPtr(60)}
+	if err := svc.CreateExercise(ctx, yoga); err != nil {
+		t.Fatalf("yoga CreateExercise failed: %v", err)
+	}
+
+	strength := &ExerciseSession{Day: "2026-07-07", Type: ExerciseStrength, Location: strPtr("Crunch")}
+	if err := svc.CreateExercise(ctx, strength); err != nil {
+		t.Fatalf("strength CreateExercise failed: %v", err)
+	}
+
+	meditation := &ExerciseSession{Day: "2026-07-07", Type: ExerciseMeditation, DurationMin: intPtr(10)}
+	if err := svc.CreateExercise(ctx, meditation); err != nil {
+		t.Fatalf("meditation CreateExercise failed: %v", err)
+	}
+}
+
+func TestServiceCreateExerciseRejectsMissingFields(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		e    *ExerciseSession
+	}{
+		{"cardio missing activity", &ExerciseSession{Day: "2026-07-07", Type: ExerciseCardio, DurationMin: intPtr(30)}},
+		{"yoga missing style", &ExerciseSession{Day: "2026-07-07", Type: ExerciseYoga, Location: strPtr("Home"), DurationMin: intPtr(30)}},
+		{"strength with duration", &ExerciseSession{Day: "2026-07-07", Type: ExerciseStrength, Location: strPtr("Home"), DurationMin: intPtr(45)}},
+		{"meditation zero duration", &ExerciseSession{Day: "2026-07-07", Type: ExerciseMeditation, DurationMin: intPtr(0)}},
+	}
+	for _, c := range cases {
+		if err := svc.CreateExercise(ctx, c.e); err == nil {
+			t.Errorf("%s: expected an error, got nil", c.name)
+		}
+	}
+}
+
+func TestServiceCreateExerciseAppendsNoDedupe(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	first := &ExerciseSession{Day: "2026-07-07", Type: ExerciseCardio, Activity: strPtr("Run"), DurationMin: intPtr(30)}
+	second := &ExerciseSession{Day: "2026-07-07", Type: ExerciseCardio, Activity: strPtr("Bike"), DurationMin: intPtr(45)}
+	if err := svc.CreateExercise(ctx, first); err != nil {
+		t.Fatalf("CreateExercise failed: %v", err)
+	}
+	if err := svc.CreateExercise(ctx, second); err != nil {
+		t.Fatalf("CreateExercise failed: %v", err)
+	}
+
+	sessions, err := svc.ListExerciseRange(ctx, "2026-07-07", "2026-07-07")
+	if err != nil {
+		t.Fatalf("ListExerciseRange failed: %v", err)
+	}
+	if len(sessions) != 2 {
+		t.Errorf("len(sessions) = %d, want 2 (append, no dedupe)", len(sessions))
+	}
+}
+
+func TestServiceListExerciseRangeInclusive(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	inside := &ExerciseSession{Day: "2026-07-02", Type: ExerciseMeditation, DurationMin: intPtr(10)}
+	startEdge := &ExerciseSession{Day: "2026-07-01", Type: ExerciseMeditation, DurationMin: intPtr(10)}
+	endEdge := &ExerciseSession{Day: "2026-07-03", Type: ExerciseMeditation, DurationMin: intPtr(10)}
+	outside := &ExerciseSession{Day: "2026-07-04", Type: ExerciseMeditation, DurationMin: intPtr(10)}
+	for _, e := range []*ExerciseSession{inside, startEdge, endEdge, outside} {
+		if err := svc.CreateExercise(ctx, e); err != nil {
+			t.Fatalf("CreateExercise failed: %v", err)
+		}
+	}
+
+	sessions, err := svc.ListExerciseRange(ctx, "2026-07-01", "2026-07-03")
+	if err != nil {
+		t.Fatalf("ListExerciseRange failed: %v", err)
+	}
+	if len(sessions) != 3 {
+		t.Errorf("len(sessions) = %d, want 3 (inclusive of both ends, excluding 07-04)", len(sessions))
+	}
+}
+
+func TestServiceUpdateSettingsRoundTripsExerciseTargets(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	updated, err := svc.UpdateSettings(ctx, &Settings{
+		CalorieTarget: 1800, ProteinTargetMg: 165000,
+		CardioWeeklyTarget: 4, StrengthWeeklyTarget: 3, YogaWeeklyTarget: 1, MeditationWeeklyDays: 5,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSettings failed: %v", err)
+	}
+	if updated.CardioWeeklyTarget != 4 || updated.StrengthWeeklyTarget != 3 || updated.YogaWeeklyTarget != 1 || updated.MeditationWeeklyDays != 5 {
+		t.Errorf("weekly targets did not round-trip: %+v", updated)
+	}
+}
+
+func TestServiceUpdateSettingsRejectsNegativeExerciseTarget(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+	_, err := svc.UpdateSettings(ctx, &Settings{
+		CalorieTarget: 1800, ProteinTargetMg: 165000, CardioWeeklyTarget: -1,
+	})
+	if err == nil {
+		t.Error("expected an error for a negative cardio_weekly_target, got nil")
+	}
+}

@@ -345,6 +345,63 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   no version bump; network-only for API), apple-touch-icon. API key stored in
   `localStorage` with a first-run prompt, same as journal.
 
+## Exercise (migration 005, phase E1)
+
+Cardio / strength / yoga / meditation tracking, added alongside the food
+tracker post-launch. **Fully independent of the calorie domain** — a session
+never credits or debits `DaySummary`/`RangeDay` calories or touches the meals
+tables; this separation is an invariant every later exercise phase must
+preserve.
+
+```sql
+CREATE TABLE exercise_sessions (
+    id            BIGSERIAL PRIMARY KEY,
+    day           DATE NOT NULL,               -- user-chosen, independent of performed_at
+    performed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    type          TEXT NOT NULL CHECK (type IN ('cardio','strength','yoga','meditation')),
+    activity      TEXT,                        -- cardio: Run/Bike/Hike/Swim/Row/Other
+    location      TEXT,                        -- strength + yoga
+    style         TEXT,                        -- yoga: Vinyasa/Hot/Other
+    duration_min  INT,                         -- cardio/yoga/meditation; NULL for strength
+    note          TEXT NOT NULL DEFAULT '',
+    input_kind    TEXT NOT NULL DEFAULT 'tap'
+                  CHECK (input_kind IN ('tap','text','voice','import')),
+    ai_raw        JSONB,                       -- raw AI output when NL-parsed (exercise phase 4)
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX exercise_sessions_day_idx ON exercise_sessions(day);
+```
+
+`activity`/`location`/`style` are free-text (not DB enums) so "Other" and
+future values need no migration; the **service** validates the field the type
+requires: cardio needs `activity` + `duration_min > 0`; yoga needs `location`
++ `style` + `duration_min > 0`; meditation needs `duration_min > 0`; strength
+needs `location` and must **not** have `duration_min` set (no duration field
+for it yet). `duration_min` is integer minutes — no floats, same as the food
+domain. **Multiple sessions per day per type are normal** (yoga twice, a hike
+after a swim) — saves always append, never upsert/dedupe by (day, type).
+
+`settings` gained four weekly-target columns, all **Monday–Sunday weeks**:
+`cardio_weekly_target` (default 3), `strength_weekly_target` (default 2),
+`yoga_weekly_target` (default 2), `meditation_weekly_days` (default 7 — a
+days-per-week target, not a session count).
+
+API — same bearer auth, JSON in/out as the rest of `/api`:
+
+```
+POST   /api/exercise            {day,type,activity,location,style,duration_min,note,input_kind} → 201 ExerciseSession
+GET    /api/exercise?start=&end=                                → [ExerciseSession]  (day range, inclusive; both required)
+GET    /api/exercise/{id}                                       → ExerciseSession
+PUT    /api/exercise/{id}       same body shape as POST         → ExerciseSession
+DELETE /api/exercise/{id}                                       → 204
+```
+
+No weekly-rollup endpoint — the home card and trends (exercise phases 2–3)
+read raw sessions via the range route and aggregate client-side. The four
+targets are included in `GET /api/settings` / accepted by `PUT /api/settings`.
+`GET /api/export` includes `exercise: [ExerciseSession]`.
+
 ## Environment
 
 Required: `DATABASE_URL`, `FOOD_API_KEY`, `ANTHROPIC_API_KEY`, `FDC_API_KEY`.

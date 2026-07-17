@@ -210,10 +210,128 @@ func (s *Service) UpdateSettings(ctx context.Context, in *Settings) (*Settings, 
 	if in.WeightTargetG != nil && *in.WeightTargetG <= 0 {
 		return nil, fmt.Errorf("invalid: weight_target_g must be positive")
 	}
+	if in.CardioWeeklyTarget < 0 || in.StrengthWeeklyTarget < 0 || in.YogaWeeklyTarget < 0 || in.MeditationWeeklyDays < 0 {
+		return nil, fmt.Errorf("invalid: weekly targets must be non-negative")
+	}
 	if err := s.store.UpdateSettings(ctx, in); err != nil {
 		return nil, err
 	}
 	return s.store.GetSettings(ctx)
+}
+
+// ---- exercise ----
+
+// validateExercise checks day/type/input_kind enums and the per-type field
+// requirements settled in the design spike: cardio needs activity+duration,
+// yoga needs location+style+duration, meditation needs duration, strength
+// needs location and must NOT have a duration (no duration field for it yet).
+func validateExercise(e *ExerciseSession) error {
+	if err := validDate(e.Day); err != nil {
+		return err
+	}
+	if !validExerciseTypes[e.Type] {
+		return fmt.Errorf("invalid: bad exercise type")
+	}
+	if e.InputKind == "" {
+		e.InputKind = ExerciseInputTap
+	}
+	if !validExerciseInputKinds[e.InputKind] {
+		return fmt.Errorf("invalid: bad input_kind")
+	}
+	if e.DurationMin != nil && *e.DurationMin < 0 {
+		return fmt.Errorf("invalid: duration_min must be non-negative")
+	}
+	switch e.Type {
+	case ExerciseCardio:
+		if e.Activity == nil || strings.TrimSpace(*e.Activity) == "" {
+			return fmt.Errorf("invalid: cardio requires activity")
+		}
+		if e.DurationMin == nil || *e.DurationMin <= 0 {
+			return fmt.Errorf("invalid: cardio requires duration_min > 0")
+		}
+	case ExerciseYoga:
+		if e.Location == nil || strings.TrimSpace(*e.Location) == "" {
+			return fmt.Errorf("invalid: yoga requires location")
+		}
+		if e.Style == nil || strings.TrimSpace(*e.Style) == "" {
+			return fmt.Errorf("invalid: yoga requires style")
+		}
+		if e.DurationMin == nil || *e.DurationMin <= 0 {
+			return fmt.Errorf("invalid: yoga requires duration_min > 0")
+		}
+	case ExerciseMeditation:
+		if e.DurationMin == nil || *e.DurationMin <= 0 {
+			return fmt.Errorf("invalid: meditation requires duration_min > 0")
+		}
+	case ExerciseStrength:
+		if e.Location == nil || strings.TrimSpace(*e.Location) == "" {
+			return fmt.Errorf("invalid: strength requires location")
+		}
+		if e.DurationMin != nil {
+			return fmt.Errorf("invalid: strength must not have duration_min")
+		}
+	}
+	return nil
+}
+
+func (s *Service) CreateExercise(ctx context.Context, e *ExerciseSession) error {
+	if err := validateExercise(e); err != nil {
+		return err
+	}
+	return s.store.CreateExercise(ctx, e)
+}
+
+func (s *Service) GetExercise(ctx context.Context, id int64) (*ExerciseSession, error) {
+	e, err := s.store.GetExercise(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		return nil, fmt.Errorf("not found: exercise session")
+	}
+	return e, nil
+}
+
+func (s *Service) UpdateExercise(ctx context.Context, e *ExerciseSession) error {
+	existing, err := s.store.GetExercise(ctx, e.ID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("not found: exercise session")
+	}
+	if err := validateExercise(e); err != nil {
+		return err
+	}
+	return s.store.UpdateExercise(ctx, e)
+}
+
+func (s *Service) DeleteExercise(ctx context.Context, id int64) error {
+	existing, err := s.store.GetExercise(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("not found: exercise session")
+	}
+	return s.store.DeleteExercise(ctx, id)
+}
+
+func (s *Service) ListExerciseRange(ctx context.Context, start, end string) ([]ExerciseSession, error) {
+	if err := validDate(start); err != nil {
+		return nil, err
+	}
+	if err := validDate(end); err != nil {
+		return nil, err
+	}
+	sessions, err := s.store.ListExerciseRange(ctx, start, end)
+	if err != nil {
+		return nil, err
+	}
+	if sessions == nil {
+		sessions = []ExerciseSession{}
+	}
+	return sessions, nil
 }
 
 // ---- summaries ----
@@ -283,11 +401,19 @@ func (s *Service) Export(ctx context.Context) (*ExportDoc, error) {
 	if err != nil {
 		return nil, err
 	}
+	exercise, err := s.store.ListAllExercise(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exercise == nil {
+		exercise = []ExerciseSession{}
+	}
 	return &ExportDoc{
 		ExportedAt: time.Now().UTC(),
 		Settings:   *settings,
 		Weights:    weights,
 		Meals:      meals,
 		Favorites:  favorites,
+		Exercise:   exercise,
 	}, nil
 }
