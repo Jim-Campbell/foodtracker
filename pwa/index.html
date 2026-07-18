@@ -13,11 +13,13 @@
   --bg: #faf7f2; --card: #fff; --text: #201c18; --muted: #7a7168;
   --line: #e8e1d8; --primary: #c2542a; --green: #3a8f5c; --amber: #d99a2b; --red: #c2453b;
   --chip: #f1ece4; --chip-on: #c2542a; --shadow: 0 1px 3px rgba(0,0,0,.08);
+  --green-tint: rgba(58,143,92,.15);
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #15130f; --card: #211d18; --text: #ece6dd; --muted: #a49b8f;
     --line: #332d26; --chip: #2b2620; --shadow: 0 1px 3px rgba(0,0,0,.4);
+    --green-tint: rgba(58,143,92,.28);
   }
 }
 * { box-sizing: border-box; margin: 0; }
@@ -105,6 +107,22 @@ input[type=text], input[type=number], input[type=date] {
 .macrorow svg { flex-shrink: 0; }
 .leg { font-size: .8rem; line-height: 1.5; display: flex; align-items: center; gap: 6px; }
 .legdot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+/* training card */
+.trow { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.trow:last-child { border-bottom: none; }
+.trow-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--chip); display: flex; align-items: center; justify-content: center; font-size: 1.05rem; flex-shrink: 0; }
+.trow-icon.met { background: var(--green-tint); }
+.trow .grow { flex: 1; min-width: 0; }
+.trow .m { font-weight: 500; }
+.trow .s { font-size: .78rem; color: var(--muted); }
+.tdots { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; max-width: 90px; justify-content: flex-end; }
+.tdot { width: 9px; height: 9px; border-radius: 50%; background: var(--chip); border: 1.5px solid var(--line); flex-shrink: 0; }
+.tdot.on { background: var(--green); border-color: var(--green); }
+.tdot.today { background: none; border: 1.5px dashed var(--primary); }
+.tcount { font-size: .82rem; font-weight: 600; flex-shrink: 0; min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+.tcount.met { color: var(--green); }
+.qlSub { margin-bottom: 10px; }
+input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; }
 /* item editor */
 .itemlist { margin-bottom: 6px; }
 .itemrow { border-bottom: 1px solid var(--line); padding: 10px 0; }
@@ -185,6 +203,7 @@ const S = {
   health: { photos: false, ai: false },
   trendsRange: 'week',
   trendRows: null, trendWeights: null, trendStart: null, trendEnd: null,
+  exercise: null,
 };
 
 // ---------- api ----------
@@ -259,6 +278,18 @@ function fmtDayHeader(d) {
   const dt = new Date(d + 'T12:00:00');
   return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
+function weekStart(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dow = dt.getUTCDay(); // 0 Sun..6 Sat
+  dt.setUTCDate(dt.getUTCDate() - ((dow + 6) % 7)); // back to Monday
+  return dt.toISOString().slice(0, 10);
+}
+function daysBetween(a, b) {
+  const [ay, am, ad] = a.split('-').map(Number), [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
+}
+function weekdayShort(d) { return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' }); }
 function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function cap(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
 function toast(msg, ms = 2400) {
@@ -462,6 +493,7 @@ function renderToday(m) {
       ${proteinBar(s.protein_mg, s.protein_target_mg)}
       ${macroRow(s)}
     </div>
+    ${trainingCardHTML()}
     ${hasAny
       ? order.map(([key, label]) => {
         const slotMeals = groups[key];
@@ -474,6 +506,178 @@ function renderToday(m) {
       }).join('')
       : '<div class="empty">No meals logged yet</div>'}
   `;
+  if (!S.exercise) loadExercise().then(render).catch(e => toast('Error: ' + e.message));
+}
+
+// ==================== TRAINING ====================
+const EX_TYPES = [
+  { key: 'cardio', label: 'Cardio', icon: '🏃', targetKey: 'cardio_weekly_target' },
+  { key: 'strength', label: 'Strength', icon: '🏋️', targetKey: 'strength_weekly_target' },
+  { key: 'yoga', label: 'Yoga', icon: '🧘', targetKey: 'yoga_weekly_target' },
+];
+const EX_FIELDS = {
+  cardio: { label: 'Cardio', chips: [
+    { key: 'activity', label: 'Activity', options: ['Run', 'Bike', 'Hike', 'Swim', 'Row', 'Other'], default: 'Run' },
+    { key: 'duration_min', label: 'Minutes', options: [20, 30, 45, 60, 90], default: 30, numeric: true },
+  ] },
+  strength: { label: 'Strength', chips: [
+    { key: 'location', label: 'Where', options: ['Crunch', 'Home', '24 Hour', 'Rec Center'], default: 'Crunch' },
+  ] },
+  yoga: { label: 'Yoga', chips: [
+    { key: 'location', label: 'Where', options: ['Studio', 'Home'], default: 'Studio' },
+    { key: 'style', label: 'Style', options: ['Vinyasa', 'Hot', 'Other'], default: 'Vinyasa' },
+    { key: 'duration_min', label: 'Length', options: [30, 45, 60, 75, 90], default: 60, numeric: true },
+  ] },
+  meditation: { label: 'Meditation', chips: [
+    { key: 'duration_min', label: 'Minutes', options: [5, 10, 15, 20, 30], default: 10, numeric: true },
+  ] },
+};
+async function loadExercise() {
+  const end = today();
+  const start = weekStart(addDays(end, -7 * 8));
+  const sessions = await api(`/exercise?start=${start}&end=${end}`);
+  S.exercise = { sessions, start, end };
+}
+function invalidateExercise() { S.exercise = null; }
+function typeSessionsInWeek(sessions, type, weekStartStr) {
+  const end = addDays(weekStartStr, 6);
+  return sessions.filter(s => s.type === type && s.day >= weekStartStr && s.day <= end);
+}
+// One dot per session this week, in chronological order, zipped so filled
+// dots link back to the session that earned them (tap to edit). A dashed
+// "today" dot fills the next unmet slot when nothing's logged for the type
+// yet today; sessions beyond the target render as extra filled dots.
+function targetDotsHTML(type, weekSessions, target, todayCount) {
+  const sorted = [...weekSessions].sort((a, b) => a.performed_at.localeCompare(b.performed_at));
+  const count = sorted.length;
+  const filled = Math.min(count, target);
+  let html = '', si = 0;
+  const dot = (cls, session) => {
+    let click = session ? `editExerciseSession(${session.id})` : (cls === 'today' ? `quickLogSheet('${type}')` : '');
+    return `<span class="tdot${cls ? ' ' + cls : ''}" ${click ? `onclick="event.stopPropagation();${click}"` : ''}></span>`;
+  };
+  for (let i = 0; i < filled; i++) { html += dot('on', sorted[si]); si++; }
+  if (filled < target) {
+    html += dot(todayCount === 0 ? 'today' : '', null);
+    for (let i = filled + 1; i < target; i++) html += dot('', null);
+  }
+  for (; si < count; si++) html += dot('on', sorted[si]);
+  return html;
+}
+function exerciseSubtitle(sessions, type, weekStartStr, todayCount) {
+  if (todayCount >= 1) return todayCount > 1 ? `today ×${todayCount}` : 'today';
+  const typeSessions = sessions.filter(s => s.type === type).sort((a, b) => b.day.localeCompare(a.day));
+  const thisWeek = typeSessions.find(s => s.day >= weekStartStr && s.day < S.day);
+  if (thisWeek) return `last: ${weekdayShort(thisWeek.day)}`;
+  const before = typeSessions.find(s => s.day < weekStartStr);
+  if (before) {
+    const wa = Math.round(daysBetween(weekStart(before.day), weekStartStr) / 7);
+    return `last: ${weekdayShort(before.day)} · ${wa <= 1 ? 'last wk' : wa + ' wks ago'}`;
+  }
+  return 'none yet';
+}
+function trainingCardHTML() {
+  if (!S.exercise) return `<div class="card"><h3>Training · this week</h3><div class="muted sm">Loading…</div></div>`;
+  const ws = weekStart(S.day);
+  const sessions = S.exercise.sessions;
+  const rows = EX_TYPES.map(t => {
+    const weekSessions = typeSessionsInWeek(sessions, t.key, ws);
+    const count = weekSessions.length;
+    const target = (S.settings && S.settings[t.targetKey]) || 0;
+    const todayCount = weekSessions.filter(s => s.day === S.day).length;
+    const met = target > 0 && count >= target;
+    return `<div class="trow" onclick="quickLogSheet('${t.key}')">
+      <div class="trow-icon${met ? ' met' : ''}">${t.icon}</div>
+      <div class="grow"><div class="m">${t.label}</div><div class="s">${exerciseSubtitle(sessions, t.key, ws, todayCount)}</div></div>
+      <div class="tdots">${targetDotsHTML(t.key, weekSessions, target, todayCount)}</div>
+      <div class="tcount${met ? ' met' : ''}">${count}/${target}${met ? ' ✓' : ''}</div>
+    </div>`;
+  }).join('');
+  const days = []; for (let i = 0; i < 7; i++) days.push(addDays(ws, i));
+  const medByDay = {};
+  sessions.filter(s => s.type === 'meditation' && days.includes(s.day)).forEach(s => (medByDay[s.day] = medByDay[s.day] || []).push(s));
+  const medTarget = (S.settings && S.settings.meditation_weekly_days) || 0;
+  const medDone = Object.keys(medByDay).length;
+  const medMet = medTarget > 0 && medDone >= medTarget;
+  const medDots = days.map(d => {
+    if (medByDay[d]) return `<span class="tdot on" onclick="event.stopPropagation();editExerciseSession(${medByDay[d][0].id})"></span>`;
+    if (d === S.day) return `<span class="tdot today" onclick="event.stopPropagation();quickLogSheet('meditation')"></span>`;
+    return '<span class="tdot"></span>';
+  }).join('');
+  const medRow = `<div class="trow" onclick="quickLogSheet('meditation')">
+    <div class="trow-icon${medMet ? ' met' : ''}">🪷</div>
+    <div class="grow"><div class="m">Meditation</div></div>
+    <div class="tdots">${medDots}</div>
+    <div class="tcount${medMet ? ' met' : ''}">${medDone}/${medTarget}${medMet ? ' ✓' : ''}</div>
+  </div>`;
+  return `<div class="card"><h3>Training · this week</h3>${rows}${medRow}</div>`;
+}
+function editExerciseSession(id) {
+  const s = (S.exercise?.sessions || []).find(x => x.id === id);
+  if (!s) return;
+  quickLogSheet(s.type, s);
+}
+let QUICKLOG = null;
+function quickLogSheet(type, editSession) {
+  const cfg = EX_FIELDS[type];
+  const vals = {};
+  cfg.chips.forEach(f => {
+    const v = editSession ? editSession[f.key] : f.default;
+    if (!f.numeric && v && !f.options.includes(v)) { vals[f.key] = 'Other'; vals[f.key + '_text'] = v; }
+    else vals[f.key] = v ?? f.default;
+  });
+  QUICKLOG = { type, vals, editId: editSession ? editSession.id : null };
+  renderQuickLog();
+}
+function setQuickLogVal(key, val) { QUICKLOG.vals[key] = val; renderQuickLog(); }
+function renderQuickLog() {
+  const { type, vals, editId } = QUICKLOG;
+  const cfg = EX_FIELDS[type];
+  const existingToday = (S.exercise?.sessions || []).filter(s => s.type === type && s.day === S.day && s.id !== editId);
+  const fieldsHTML = cfg.chips.map(f => {
+    const isOther = !f.numeric && vals[f.key] === 'Other';
+    const chips = f.options.map(o => `<button class="${vals[f.key] === o ? 'on' : ''}" onclick="setQuickLogVal('${f.key}', ${typeof o === 'number' ? o : `'${esc(o)}'`})">${o}</button>`).join('');
+    const custom = f.numeric ? `<input type="number" class="qlCustom" placeholder="Custom minutes" value="${vals[f.key] && !f.options.includes(vals[f.key]) ? vals[f.key] : ''}" oninput="setQuickLogValQuiet('${f.key}', parseInt(this.value,10)||0)">` : '';
+    const other = isOther ? `<input type="text" class="qlCustom" placeholder="Describe" value="${esc(vals[f.key + '_text'] || '')}" oninput="QUICKLOG.vals['${f.key}_text']=this.value">` : '';
+    return `<label class="f">${f.label}</label><div class="chips">${chips}</div>${custom}${other}`;
+  }).join('');
+  openDialog(`<h2>Log ${cfg.label}</h2>
+    ${existingToday.length ? `<div class="muted sm qlSub">Adds another session — ${existingToday.length} already logged today</div>` : ''}
+    ${fieldsHTML}
+    <div class="dlg-actions">
+      ${editId ? `<button class="btn danger" onclick="deleteQuickLog()">Delete</button>` : ''}
+      <button class="btn ghost" onclick="closeDialog()">Cancel</button>
+      <button class="btn primary" onclick="saveQuickLog()">Save</button>
+    </div>`);
+}
+// setQuickLogVal re-renders (so chip highlight state stays honest); the free-text
+// custom-minutes input uses this quiet variant so keystrokes aren't stolen by focus loss.
+function setQuickLogValQuiet(key, val) { QUICKLOG.vals[key] = val; }
+async function saveQuickLog() {
+  const { type, vals, editId } = QUICKLOG;
+  const cfg = EX_FIELDS[type];
+  const body = { day: S.day, type, note: '', input_kind: 'tap' };
+  cfg.chips.forEach(f => {
+    let v = vals[f.key];
+    if (!f.numeric && v === 'Other' && vals[f.key + '_text']) v = vals[f.key + '_text'].trim();
+    if (f.numeric) body.duration_min = v || null;
+    else body[f.key] = v;
+  });
+  try {
+    if (editId) await api('/exercise/' + editId, { method: 'PUT', body });
+    else await api('/exercise', { method: 'POST', body });
+    closeDialog(); toast('Logged'); QUICKLOG = null;
+    invalidateExercise(); await loadExercise(); render();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+async function deleteQuickLog() {
+  if (!QUICKLOG || !QUICKLOG.editId) return;
+  if (!confirm('Delete this session?')) return;
+  try {
+    await api('/exercise/' + QUICKLOG.editId, { method: 'DELETE' });
+    closeDialog(); toast('Deleted'); QUICKLOG = null;
+    invalidateExercise(); await loadExercise(); render();
+  } catch (e) { toast('Error: ' + e.message); }
 }
 
 // ---------- log bar ----------
@@ -524,7 +728,7 @@ function buildLogBar() {
   const micBtn = SUPPORTS_SPEECH ? `<button class="iconbtn" id="micBtn" onclick="toggleMic()" title="Voice">🎤</button>` : '';
   const camBtn = S.health.photos ? `<button class="iconbtn" onclick="photoChooser()" title="Photo">📷</button>` : '';
   el.innerHTML = `
-    <textarea id="logInput" rows="1" placeholder="What did you eat?" oninput="autoGrowLogInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitText()}"></textarea>
+    <textarea id="logInput" rows="1" placeholder="What did you eat — or do?" oninput="autoGrowLogInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();submitText()}"></textarea>
     ${micBtn}${camBtn}
     <button class="iconbtn" onclick="openFavorites()" title="Favorites">⭐</button>
     <button class="iconbtn" onclick="weightDialog()" title="Log weight">⚖️</button>
@@ -1063,6 +1267,18 @@ function renderSettings(m) {
       <div class="dlg-actions"><button class="btn primary" onclick="saveSettings()">Save</button></div>
     </div>
     <div class="card">
+      <h2>Weekly training targets</h2>
+      <label class="f">Cardio sessions / week</label>
+      <input type="number" id="setCardio" value="${s.cardio_weekly_target ?? ''}">
+      <label class="f">Strength sessions / week</label>
+      <input type="number" id="setStrength" value="${s.strength_weekly_target ?? ''}">
+      <label class="f">Yoga sessions / week</label>
+      <input type="number" id="setYoga" value="${s.yoga_weekly_target ?? ''}">
+      <label class="f">Meditation days / week</label>
+      <input type="number" id="setMedDays" value="${s.meditation_weekly_days ?? ''}">
+      <div class="dlg-actions"><button class="btn primary" onclick="saveSettings()">Save</button></div>
+    </div>
+    <div class="card">
       <h2>Data</h2>
       <button class="btn" onclick="downloadExport()">Export JSON</button>
     </div>
@@ -1077,7 +1293,13 @@ async function saveSettings() {
   const cal = parseInt($('#setCal').value, 10) || 0;
   const pg = parseFloat($('#setProtein').value) || 0;
   const wlb = parseFloat($('#setWeight').value);
-  const body = { calorie_target: cal, protein_target_mg: Math.round(pg * 1000), weight_target_g: wlb ? Math.round(wlb * 453.592) : null };
+  const body = {
+    calorie_target: cal, protein_target_mg: Math.round(pg * 1000), weight_target_g: wlb ? Math.round(wlb * 453.592) : null,
+    cardio_weekly_target: parseInt($('#setCardio').value, 10) || 0,
+    strength_weekly_target: parseInt($('#setStrength').value, 10) || 0,
+    yoga_weekly_target: parseInt($('#setYoga').value, 10) || 0,
+    meditation_weekly_days: parseInt($('#setMedDays').value, 10) || 0,
+  };
   try {
     S.settings = await api('/settings', { method: 'PUT', body });
     S.trendRows = null;
@@ -1102,7 +1324,7 @@ async function boot() {
   buildLogBar();
   initSpeech();
   try {
-    const [summary, settings, favorites] = await Promise.all([api('/day/' + S.day), api('/settings'), api('/favorites')]);
+    const [summary, settings, favorites] = await Promise.all([api('/day/' + S.day), api('/settings'), api('/favorites'), loadExercise()]);
     S.summary = summary; S.settings = settings; S.favorites = favorites;
   } catch (e) { if (e.message !== 'unauthorized') toast('Error: ' + e.message); }
   render();

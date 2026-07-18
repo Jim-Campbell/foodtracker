@@ -402,6 +402,26 @@ read raw sessions via the range route and aggregate client-side. The four
 targets are included in `GET /api/settings` / accepted by `PUT /api/settings`.
 `GET /api/export` includes `exercise: [ExerciseSession]`.
 
+### PWA (phase E2): Training card + tap-log
+
+On Today, under the calorie hero, a **Training · this week** card shows one
+row per practice — this is the whole reminder-to-move, no nudge sentence.
+Cardio/Strength/Yoga rows show an icon, a subtitle (`today`/`today ×N`,
+`last: <Wkday>`, or `last: <Wkday> · last wk`/`· N wks ago` falling back
+across the Mon–Sun week boundary, or `none yet`), a dot per session this
+week up to the weekly target (extra dots beyond target, a dashed dot for
+today when nothing's logged yet), and `n/target` with a ✓/green treatment
+when met. Meditation is a 7-dot Mon–Sun daily row (`daysDone/7`) instead of
+a session count. Tapping a row (or its "today" dashed dot) opens a quick-log
+bottom sheet — chip pickers with sensible defaults, 2–3 taps, no AI call;
+saving always appends (`POST /api/exercise`, `input_kind: 'tap'`, `day` =
+the currently-viewed day), never overwrites. Tapping a filled dot reopens
+that session for edit/delete. The PWA fetches the current week plus an
+8-week lookback once per Today load (`GET /api/exercise?start=&end=`) and
+recomputes the card from that cache as the viewed day changes. Settings
+gained a "Weekly training targets" group for the four columns above. Trends
+(exercise phase 3) and NL logging (exercise phase 4) are not built yet.
+
 ## Environment
 
 Required: `DATABASE_URL`, `FOOD_API_KEY`, `ANTHROPIC_API_KEY`, `FDC_API_KEY`.
