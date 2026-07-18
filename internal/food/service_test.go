@@ -170,6 +170,11 @@ func TestServiceCreateExerciseValidSessionsPass(t *testing.T) {
 	if err := svc.CreateExercise(ctx, meditation); err != nil {
 		t.Fatalf("meditation CreateExercise failed: %v", err)
 	}
+
+	pt := &ExerciseSession{Day: "2026-07-07", Type: ExercisePT, DurationMin: intPtr(15)}
+	if err := svc.CreateExercise(ctx, pt); err != nil {
+		t.Fatalf("pt CreateExercise failed: %v", err)
+	}
 }
 
 func TestServiceCreateExerciseRejectsMissingFields(t *testing.T) {
@@ -184,6 +189,7 @@ func TestServiceCreateExerciseRejectsMissingFields(t *testing.T) {
 		{"yoga missing style", &ExerciseSession{Day: "2026-07-07", Type: ExerciseYoga, Location: strPtr("Home"), DurationMin: intPtr(30)}},
 		{"strength with duration", &ExerciseSession{Day: "2026-07-07", Type: ExerciseStrength, Location: strPtr("Home"), DurationMin: intPtr(45)}},
 		{"meditation zero duration", &ExerciseSession{Day: "2026-07-07", Type: ExerciseMeditation, DurationMin: intPtr(0)}},
+		{"pt zero duration", &ExerciseSession{Day: "2026-07-07", Type: ExercisePT, DurationMin: intPtr(0)}},
 	}
 	for _, c := range cases {
 		if err := svc.CreateExercise(ctx, c.e); err == nil {
@@ -243,12 +249,12 @@ func TestServiceUpdateSettingsRoundTripsExerciseTargets(t *testing.T) {
 
 	updated, err := svc.UpdateSettings(ctx, &Settings{
 		CalorieTarget: 1800, ProteinTargetMg: 165000,
-		CardioWeeklyTarget: 4, StrengthWeeklyTarget: 3, YogaWeeklyTarget: 1, MeditationWeeklyDays: 5,
+		CardioWeeklyTarget: 4, StrengthWeeklyTarget: 3, YogaWeeklyTarget: 1, MeditationWeeklyDays: 5, PTWeeklyDays: 6,
 	})
 	if err != nil {
 		t.Fatalf("UpdateSettings failed: %v", err)
 	}
-	if updated.CardioWeeklyTarget != 4 || updated.StrengthWeeklyTarget != 3 || updated.YogaWeeklyTarget != 1 || updated.MeditationWeeklyDays != 5 {
+	if updated.CardioWeeklyTarget != 4 || updated.StrengthWeeklyTarget != 3 || updated.YogaWeeklyTarget != 1 || updated.MeditationWeeklyDays != 5 || updated.PTWeeklyDays != 6 {
 		t.Errorf("weekly targets did not round-trip: %+v", updated)
 	}
 }

@@ -3,9 +3,10 @@ package ai
 import "encoding/json"
 
 const (
-	toolUSDASearch = "usda_search"
-	toolOFFBarcode = "off_barcode"
-	toolRecordMeal = "record_meal"
+	toolUSDASearch  = "usda_search"
+	toolOFFBarcode  = "off_barcode"
+	toolRecordMeal  = "record_meal"
+	toolLogExercise = "log_exercise"
 )
 
 var usdaSearchSchema = json.RawMessage(`{
@@ -87,6 +88,33 @@ var recordMealSchema = json.RawMessage(`{
   "required": ["items", "notes"]
 }`)
 
+var logExerciseSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "sessions": {
+      "type": "array",
+      "description": "Every workout/practice session described in the input -- most inputs are one session, but e.g. 'hike then a swim' or 'yoga twice today' yield more than one.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["cardio", "strength", "yoga", "meditation", "pt"],
+            "description": "cardio: running/biking/hiking/swimming/rowing. strength: lifting/gym. yoga: any yoga practice. meditation: meditation/breathwork. pt: physical therapy/rehab exercises/stretches."
+          },
+          "activity": { "type": ["string", "null"], "description": "Cardio only. Map casual phrasing to the known vocab when obvious: Run, Bike, Hike, Swim, Row, Other." },
+          "location": { "type": ["string", "null"], "description": "Strength/yoga only: where it happened, e.g. a gym name, 'Studio', 'Home'." },
+          "style": { "type": ["string", "null"], "description": "Yoga only. Map to the known vocab when obvious: Vinyasa, Hot, Other." },
+          "duration_min": { "type": ["integer", "null"], "description": "Integer minutes, from whatever the input stated. Required for cardio/yoga/meditation/pt; must be null for strength (no duration field for it yet). Leave null if truly unstated -- don't guess." },
+          "note": { "type": "string", "description": "Optional free-text note, empty string if none." }
+        },
+        "required": ["type"]
+      }
+    }
+  },
+  "required": ["sessions"]
+}`)
+
 // webSearchTool is Anthropic's server-side web search: executed API-side
 // mid-request, so restaurant/chain nutrition can come from the publisher's
 // own pages. MaxUses caps searches per parse.
@@ -108,8 +136,13 @@ func tools() []Tool {
 		},
 		{
 			Name:        toolRecordMeal,
-			Description: "Terminal tool: submit the final parsed meal. Always call this exactly once to finish, even if some items are estimates. Your response must contain only this tool call -- no text before or after it.",
+			Description: "Terminal tool for FOOD: submit the final parsed meal. Call this OR log_exercise, never both -- exactly one terminal tool call to finish, even if some items are estimates. Your response must contain only this tool call -- no text before or after it.",
 			InputSchema: recordMealSchema,
+		},
+		{
+			Name:        toolLogExercise,
+			Description: "Terminal tool for EXERCISE/workouts: submit the parsed session(s). Call this OR record_meal, never both -- exactly one terminal tool call to finish. No USDA/barcode lookups needed first. Your response must contain only this tool call -- no text before or after it.",
+			InputSchema: logExerciseSchema,
 		},
 	}
 }

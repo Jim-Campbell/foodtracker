@@ -282,9 +282,26 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
 - Vision parses (`/api/analyze-photo`) put the image (fetched from R2, base64)
   in the first user message with the hint text. Same loop; Claude may read a
   nutrition label directly (source `label`) or extract barcode digits and call
-  `off_barcode`.
-- Max ~8 tool-use rounds, then force `record_meal`. Model from `AI_MODEL` env
-  (default `claude-sonnet-5`).
+  `off_barcode`. Photos are always food — never exercise.
+- Max ~8 tool-use rounds, then force one of `record_meal`/`log_exercise`
+  (`tool_choice: "any"` over both). Model from `AI_MODEL` env (default
+  `claude-sonnet-5`).
+- **`log_exercise` (phase E4): the same loop understands exercise.** The
+  system prompt has Claude classify the input first and call exactly one
+  terminal tool — `record_meal` for food, `log_exercise` for a workout
+  ("30 min run", "hot yoga at the studio, 60 minutes", "hike after a swim",
+  "did my PT for 20 minutes"). Exercise inputs need no USDA/barcode lookups;
+  Claude fills an array of sessions directly from the text (each
+  `{type, activity?, location?, style?, duration_min?, note?}`, matching the
+  phase-1 per-type field rules — "hike then a swim" yields two sessions).
+  `ParseResult` carries a `kind` discriminator (`"meal"` default, or
+  `"exercise"`) plus an `exercise: [ExerciseSession]` array populated instead
+  of `items` when `kind` is `"exercise"`; `ai_raw` still holds the full trace.
+  Each session is checked against the same per-type required-field rules the
+  save path enforces (`food.ExerciseFieldErrors`, shared with
+  `validateExercise`) — an incomplete session isn't dropped, it's flagged in
+  `notes` so Jim can complete it in the confirm sheet, since the AI never
+  writes to the DB. The `/api/parse` NDJSON handler is otherwise unchanged.
 - **Tool results are slim; `micros` is attached server-side.** Lookup results
   sent to the model exclude per-nutrient lists (an FDC food can carry 100+
   nutrient entries — as tokens they made parses slow and expensive, and the
@@ -358,7 +375,7 @@ CREATE TABLE exercise_sessions (
     id            BIGSERIAL PRIMARY KEY,
     day           DATE NOT NULL,               -- user-chosen, independent of performed_at
     performed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    type          TEXT NOT NULL CHECK (type IN ('cardio','strength','yoga','meditation')),
+    type          TEXT NOT NULL CHECK (type IN ('cardio','strength','yoga','meditation','pt')),  -- 'pt' added migration 006
     activity      TEXT,                        -- cardio: Run/Bike/Hike/Swim/Row/Other
     location      TEXT,                        -- strength + yoga
     style         TEXT,                        -- yoga: Vinyasa/Hot/Other
@@ -376,7 +393,8 @@ CREATE INDEX exercise_sessions_day_idx ON exercise_sessions(day);
 `activity`/`location`/`style` are free-text (not DB enums) so "Other" and
 future values need no migration; the **service** validates the field the type
 requires: cardio needs `activity` + `duration_min > 0`; yoga needs `location`
-+ `style` + `duration_min > 0`; meditation needs `duration_min > 0`; strength
++ `style` + `duration_min > 0`; meditation and pt need `duration_min > 0`
+(pt has no activity/location/style, exactly like meditation); strength
 needs `location` and must **not** have `duration_min` set (no duration field
 for it yet). `duration_min` is integer minutes — no floats, same as the food
 domain. **Multiple sessions per day per type are normal** (yoga twice, a hike
@@ -385,7 +403,8 @@ after a swim) — saves always append, never upsert/dedupe by (day, type).
 `settings` gained four weekly-target columns, all **Monday–Sunday weeks**:
 `cardio_weekly_target` (default 3), `strength_weekly_target` (default 2),
 `yoga_weekly_target` (default 2), `meditation_weekly_days` (default 7 — a
-days-per-week target, not a session count).
+days-per-week target, not a session count). Migration 006 (phase E3) added
+`pt_weekly_days` (default 7), framed the same way as meditation.
 
 API — same bearer auth, JSON in/out as the rest of `/api`:
 
@@ -398,8 +417,9 @@ DELETE /api/exercise/{id}                                       → 204
 ```
 
 No weekly-rollup endpoint — the home card and trends (exercise phases 2–3)
-read raw sessions via the range route and aggregate client-side. The four
-targets are included in `GET /api/settings` / accepted by `PUT /api/settings`.
+read raw sessions via the range route and aggregate client-side. The five
+targets (cardio/strength/yoga/meditation/pt) are included in
+`GET /api/settings` / accepted by `PUT /api/settings`.
 `GET /api/export` includes `exercise: [ExerciseSession]`.
 
 ### PWA (phase E2): Training card + tap-log
@@ -419,8 +439,60 @@ the currently-viewed day), never overwrites. Tapping a filled dot reopens
 that session for edit/delete. The PWA fetches the current week plus an
 8-week lookback once per Today load (`GET /api/exercise?start=&end=`) and
 recomputes the card from that cache as the viewed day changes. Settings
-gained a "Weekly training targets" group for the four columns above. Trends
-(exercise phase 3) and NL logging (exercise phase 4) are not built yet.
+gained a "Weekly training targets" group for the four columns above.
+
+### PWA (phase E3): Training trends + PT
+
+The Trends tab gained a **Food · Training** segmented control alongside the
+existing Week/Month one; "Training" swaps in a **2 wk · 6 wk · 12 wk** range
+control that scopes every card below plus the table. All Training data comes
+from `GET /api/exercise?start=&end=` for the selected range (Mon-anchored
+weeks, oldest to newest, ending at the current in-progress week) and is
+aggregated into per-week buckets client-side — same no-rollup-endpoint
+pattern as the home card.
+
+- **Active minutes per week** — inline-SVG stacked column chart (cardio,
+  yoga, meditation, PT bottom-to-top; strength has no duration so it rides a
+  session-count row under the x-axis instead, marked with 🏋️). Each segment
+  prints its session count (cardio/yoga) or day count (meditation/PT) when
+  tall enough (≥16px); the in-progress current week renders hollow
+  (stroke-only) rather than filled, the same honesty convention as the food
+  trends. x-axis labels every week at ≤6 bars, or month ticks at 12.
+- **Mix cards** — Cardio mix (horizontal bars by activity), Yoga (studio/home
+  split bar + style tally), Meditation and PT stat tiles (min/day and
+  days/week averages over **completed weeks only**, excluding the current
+  partial week). No separate strength card — its numbers live in the
+  under-axis row on the minutes chart.
+- **Table view** — a `<details>` twin with per-week cardio/strength/yoga/
+  meditation/PT/total numbers, the WCAG-clean fallback for anything the chart
+  conveys by color or tooltip alone. Current week marked `*`.
+- Layout is single-column on phone widths and a wider `<main>` + row/grid mix
+  cards on desktop (`main.wide`, ≥720px) — the one place in the PWA that
+  isn't fixed to the 480px phone-first shell.
+
+PT (migration 006, `internal/food/types.go` `ExercisePT`) is a fifth exercise
+type that behaves exactly like meditation everywhere: `validateExercise`
+requires `duration_min > 0` and nothing else, the home card gained a PT habit
+row (7-dot Mon–Sun, `daysDone/pt_weekly_days`, 🩼 icon — a placeholder Jim
+may swap later) directly under the meditation row, its quick-log sheet is a
+Minutes chip picker (`[10 · 15 · 20 · 30 · 45]`, default 15), and Settings
+gained a "PT days / week" input beside the meditation one. Color tokens
+`--s-cardio`/`--s-strength`/`--s-yoga`/`--s-med`/`--s-pt` (CVD-checked as a
+five-color set, `--s-strength` and `--s-pt` step in dark mode) drive the
+chart segments and legend; chart text (counts, axis, labels) always wears the
+app's text/muted tokens, never a series color.
+
+### PWA (phase E4): NL/voice exercise logging
+
+The one log bar (typed or dictated) understands exercise the same way it
+understands food. When `/api/parse` returns `kind: "exercise"`, the PWA shows
+a confirm sheet instead of the meal draft dialog — one block per parsed
+session using the same chip-picker fields as the phase-2 quick-log sheet
+(`EX_FIELDS`), so Jim can fix activity/minutes/etc., or remove a session,
+before saving. Save posts once per session to `POST /api/exercise` with
+`input_kind: 'text'` or `'voice'` (mirroring how the mic sets `input_kind` on
+the food path) and the currently-viewed `day`, then refreshes the Training
+card. Meals still render the existing draft dialog; photos are always food.
 
 ## Environment
 

@@ -14,12 +14,14 @@
   --line: #e8e1d8; --primary: #c2542a; --green: #3a8f5c; --amber: #d99a2b; --red: #c2453b;
   --chip: #f1ece4; --chip-on: #c2542a; --shadow: 0 1px 3px rgba(0,0,0,.08);
   --green-tint: rgba(58,143,92,.15);
+  --s-cardio: #c2542a; --s-strength: #d99a2b; --s-yoga: #3a8f5c; --s-med: #5271c4; --s-pt: #b5548f;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #15130f; --card: #211d18; --text: #ece6dd; --muted: #a49b8f;
     --line: #332d26; --chip: #2b2620; --shadow: 0 1px 3px rgba(0,0,0,.4);
     --green-tint: rgba(58,143,92,.28);
+    --s-strength: #c08417; --s-pt: #c56ba0;
   }
 }
 * { box-sizing: border-box; margin: 0; }
@@ -153,6 +155,31 @@ input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); borde
 .trendseg { margin-bottom: 12px; }
 .avgrow { display: flex; justify-content: space-around; text-align: center; margin-bottom: 12px; }
 .chart { width: 100%; height: auto; display: block; }
+main.wide { max-width: 480px; }
+.filterrow { display: flex; gap: 8px; margin-bottom: 12px; }
+.filterrow .seg:first-child { flex: 1.2; }
+.filterrow .seg:last-child { flex: 1; }
+.trainlegend { display: flex; flex-wrap: wrap; gap: 10px 14px; justify-content: center; margin-top: 8px; font-size: .78rem; color: var(--muted); }
+.trainlegend .leg { font-size: .78rem; }
+.mixrow { display: flex; flex-direction: column; gap: 12px; }
+.mixrow > .card { margin-bottom: 0; }
+.stattile { display: flex; justify-content: space-around; gap: 10px; text-align: center; }
+.stattile .big { font-size: 1.4rem; }
+.hbar-row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+.hbar-row .hbar-label { width: 44px; flex-shrink: 0; font-size: .78rem; color: var(--muted); }
+.hbar-track { flex: 1; height: 14px; background: var(--chip); border-radius: 4px; overflow: hidden; position: relative; }
+.hbar-fill { height: 100%; border-radius: 4px; }
+.hbar-val { width: 34px; flex-shrink: 0; font-size: .78rem; text-align: right; font-variant-numeric: tabular-nums; }
+.splitbar { display: flex; height: 16px; border-radius: 5px; overflow: hidden; margin: 8px 0 6px; }
+.styletally { display: flex; gap: 10px; flex-wrap: wrap; font-size: .78rem; color: var(--muted); }
+table.traintable { width: 100%; border-collapse: collapse; font-size: .78rem; margin-top: 8px; }
+table.traintable th, table.traintable td { padding: 5px 4px; text-align: right; border-bottom: 1px solid var(--line); }
+table.traintable th:first-child, table.traintable td:first-child { text-align: left; }
+@media (min-width: 720px) {
+  main.wide { max-width: 900px; }
+  .mixrow { flex-direction: row; }
+  .mixrow > .card { flex: 1; min-width: 0; }
+}
 /* misc */
 .spinner { width: 32px; height: 32px; border: 3px solid var(--chip); border-top-color: var(--primary); border-radius: 50%; margin: 0 auto; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -204,6 +231,7 @@ const S = {
   trendsRange: 'week',
   trendRows: null, trendWeights: null, trendStart: null, trendEnd: null,
   exercise: null,
+  trendsTab: 'food', trainingRange: '6wk', trainingData: null,
 };
 
 // ---------- api ----------
@@ -318,6 +346,7 @@ function render() {
   renderTabNav();
   $('#logbar').style.display = S.view === 'today' ? 'flex' : 'none';
   const m = $('#main');
+  m.classList.toggle('wide', S.view === 'trends' && S.trendsTab === 'training');
   ({ today: renderToday, trends: renderTrends, settings: renderSettings }[S.view] || renderToday)(m);
 }
 
@@ -531,6 +560,9 @@ const EX_FIELDS = {
   meditation: { label: 'Meditation', chips: [
     { key: 'duration_min', label: 'Minutes', options: [5, 10, 15, 20, 30], default: 10, numeric: true },
   ] },
+  pt: { label: 'PT', chips: [
+    { key: 'duration_min', label: 'Minutes', options: [10, 15, 20, 30, 45], default: 15, numeric: true },
+  ] },
 };
 async function loadExercise() {
   const end = today();
@@ -594,23 +626,27 @@ function trainingCardHTML() {
     </div>`;
   }).join('');
   const days = []; for (let i = 0; i < 7; i++) days.push(addDays(ws, i));
-  const medByDay = {};
-  sessions.filter(s => s.type === 'meditation' && days.includes(s.day)).forEach(s => (medByDay[s.day] = medByDay[s.day] || []).push(s));
-  const medTarget = (S.settings && S.settings.meditation_weekly_days) || 0;
-  const medDone = Object.keys(medByDay).length;
-  const medMet = medTarget > 0 && medDone >= medTarget;
-  const medDots = days.map(d => {
-    if (medByDay[d]) return `<span class="tdot on" onclick="event.stopPropagation();editExerciseSession(${medByDay[d][0].id})"></span>`;
-    if (d === S.day) return `<span class="tdot today" onclick="event.stopPropagation();quickLogSheet('meditation')"></span>`;
-    return '<span class="tdot"></span>';
-  }).join('');
-  const medRow = `<div class="trow" onclick="quickLogSheet('meditation')">
-    <div class="trow-icon${medMet ? ' met' : ''}">🪷</div>
-    <div class="grow"><div class="m">Meditation</div></div>
-    <div class="tdots">${medDots}</div>
-    <div class="tcount${medMet ? ' met' : ''}">${medDone}/${medTarget}${medMet ? ' ✓' : ''}</div>
-  </div>`;
-  return `<div class="card"><h3>Training · this week</h3>${rows}${medRow}</div>`;
+  const habitRow = (type, icon, label, targetKey) => {
+    const byDay = {};
+    sessions.filter(s => s.type === type && days.includes(s.day)).forEach(s => (byDay[s.day] = byDay[s.day] || []).push(s));
+    const target = (S.settings && S.settings[targetKey]) || 0;
+    const done = Object.keys(byDay).length;
+    const met = target > 0 && done >= target;
+    const dots = days.map(d => {
+      if (byDay[d]) return `<span class="tdot on" onclick="event.stopPropagation();editExerciseSession(${byDay[d][0].id})"></span>`;
+      if (d === S.day) return `<span class="tdot today" onclick="event.stopPropagation();quickLogSheet('${type}')"></span>`;
+      return '<span class="tdot"></span>';
+    }).join('');
+    return `<div class="trow" onclick="quickLogSheet('${type}')">
+      <div class="trow-icon${met ? ' met' : ''}">${icon}</div>
+      <div class="grow"><div class="m">${label}</div></div>
+      <div class="tdots">${dots}</div>
+      <div class="tcount${met ? ' met' : ''}">${done}/${target}${met ? ' ✓' : ''}</div>
+    </div>`;
+  };
+  const medRow = habitRow('meditation', '🪷', 'Meditation', 'meditation_weekly_days');
+  const ptRow = habitRow('pt', '🩼', 'PT', 'pt_weekly_days');
+  return `<div class="card"><h3>Training · this week</h3>${rows}${medRow}${ptRow}</div>`;
 }
 function editExerciseSession(id) {
   const s = (S.exercise?.sessions || []).find(x => x.id === id);
@@ -813,8 +849,90 @@ async function analyzePendingPhoto() {
 }
 async function runParse(fn, meta) {
   showSpinnerDialog();
-  try { const draft = await fn(); openDraftDialog(draft, meta); }
-  catch (e) { closeDialog(); toast('Error: ' + e.message); }
+  try {
+    const result = await fn();
+    if (result.kind === 'exercise') openExerciseConfirm(result, meta);
+    else openDraftDialog(result, meta);
+  } catch (e) { closeDialog(); toast('Error: ' + e.message); }
+}
+
+// ---------- exercise confirm sheet (NL/voice logging, phase E4) ----------
+// The one log bar understands food and exercise; when /api/parse returns
+// kind:"exercise" this shows the parsed session(s) using the same chip-picker
+// fields as the tap-log sheet (quickLogSheet) instead of the meal draft
+// dialog. Multiple sessions ("hike then a swim") get one block each.
+let EXCONFIRM = null;
+function sessionToVals(s) {
+  const cfg = EX_FIELDS[s.type];
+  const vals = {};
+  cfg.chips.forEach(f => {
+    const v = s[f.key];
+    if (!f.numeric && v && !f.options.includes(v)) { vals[f.key] = 'Other'; vals[f.key + '_text'] = v; }
+    else vals[f.key] = v ?? f.default;
+  });
+  return vals;
+}
+function openExerciseConfirm(result, meta) {
+  EXCONFIRM = {
+    input_kind: meta.input_kind || 'text',
+    notes: result.notes || '',
+    sessions: (result.exercise || []).map(s => ({ type: s.type, vals: sessionToVals(s) })),
+  };
+  renderExerciseConfirm();
+}
+function renderExerciseConfirm() {
+  if (!EXCONFIRM.sessions.length) {
+    openDialog(`<h2>Log exercise</h2><div class="empty">Nothing was parsed — try rephrasing.</div>
+      <div class="dlg-actions"><button class="btn" onclick="closeDialog()">Close</button></div>`);
+    return;
+  }
+  const blocks = EXCONFIRM.sessions.map((sess, i) => {
+    const cfg = EX_FIELDS[sess.type];
+    const vals = sess.vals;
+    const fieldsHTML = cfg.chips.map(f => {
+      const isOther = !f.numeric && vals[f.key] === 'Other';
+      const chips = f.options.map(o => `<button class="${vals[f.key] === o ? 'on' : ''}" onclick="setExerciseVal(${i},'${f.key}', ${typeof o === 'number' ? o : `'${esc(o)}'`})">${o}</button>`).join('');
+      const custom = f.numeric ? `<input type="number" class="qlCustom" placeholder="Custom minutes" value="${vals[f.key] && !f.options.includes(vals[f.key]) ? vals[f.key] : ''}" oninput="setExerciseValQuiet(${i},'${f.key}', parseInt(this.value,10)||0)">` : '';
+      const other = isOther ? `<input type="text" class="qlCustom" placeholder="Describe" value="${esc(vals[f.key + '_text'] || '')}" oninput="EXCONFIRM.sessions[${i}].vals['${f.key}_text']=this.value">` : '';
+      return `<label class="f">${f.label}</label><div class="chips">${chips}</div>${custom}${other}`;
+    }).join('');
+    return `<div class="card" style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3 style="margin:0">${cfg.label}</h3>
+        ${EXCONFIRM.sessions.length > 1 ? `<button class="lk" onclick="removeExerciseSession(${i})" title="Remove">✕</button>` : ''}
+      </div>
+      ${fieldsHTML}
+    </div>`;
+  }).join('');
+  openDialog(`<h2>Log exercise</h2>
+    ${EXCONFIRM.notes ? `<div class="muted sm" style="margin-bottom:10px">${esc(EXCONFIRM.notes)}</div>` : ''}
+    ${blocks}
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="closeDialog()">Cancel</button>
+      <button class="btn primary" onclick="saveExerciseConfirm()">Save</button>
+    </div>`);
+}
+function setExerciseVal(i, key, val) { EXCONFIRM.sessions[i].vals[key] = val; renderExerciseConfirm(); }
+function setExerciseValQuiet(i, key, val) { EXCONFIRM.sessions[i].vals[key] = val; }
+function removeExerciseSession(i) { EXCONFIRM.sessions.splice(i, 1); renderExerciseConfirm(); }
+async function saveExerciseConfirm() {
+  const { sessions, input_kind } = EXCONFIRM;
+  try {
+    for (const sess of sessions) {
+      const cfg = EX_FIELDS[sess.type];
+      const body = { day: S.day, type: sess.type, note: '', input_kind };
+      cfg.chips.forEach(f => {
+        let v = sess.vals[f.key];
+        if (!f.numeric && v === 'Other' && sess.vals[f.key + '_text']) v = sess.vals[f.key + '_text'].trim();
+        if (f.numeric) body.duration_min = v || null;
+        else body[f.key] = v;
+      });
+      await api('/exercise', { method: 'POST', body });
+    }
+    closeDialog(); toast(sessions.length > 1 ? `Logged ${sessions.length} sessions` : 'Logged');
+    EXCONFIRM = null;
+    invalidateExercise(); await loadExercise(); render();
+  } catch (e) { toast('Error: ' + e.message); }
 }
 
 // ---------- weight quick-entry ----------
@@ -1209,7 +1327,199 @@ function weightChart(weights, targetG) {
   return `<svg viewBox="0 0 ${w} ${h}" class="chart">${goalLine}<polyline points="${pts}" fill="none" stroke="var(--text)" stroke-width="2"/>${ma}${dots}</svg>
     <div class="s muted">${lbs[0].toFixed(1)} → ${lbs[n - 1].toFixed(1)} lb</div>`;
 }
+// ==================== TRAINING TRENDS ====================
+const TRAINING_RANGES = { '2wk': 2, '6wk': 6, '12wk': 12 };
+const TRAIN_SERIES = [
+  { key: 'cardio', color: 'var(--s-cardio)', label: 'Cardio', min: w => w.cardio.min, count: w => w.cardio.sessions },
+  { key: 'yoga', color: 'var(--s-yoga)', label: 'Yoga', min: w => w.yoga.min, count: w => w.yoga.sessions },
+  { key: 'meditation', color: 'var(--s-med)', label: 'Meditation', min: w => w.meditation.min, count: w => w.meditation.days },
+  { key: 'pt', color: 'var(--s-pt)', label: 'PT', min: w => w.pt.min, count: w => w.pt.days },
+];
+function setTrendsTab(tab) { S.trendsTab = tab; render(); }
+function setTrainingRange(r) { S.trainingRange = r; S.trainingData = null; render(); }
+async function loadTrainingTrends() {
+  const weeksN = TRAINING_RANGES[S.trainingRange] || 6;
+  const curWs = weekStart(today());
+  const start = addDays(curWs, -7 * (weeksN - 1));
+  const end = today();
+  const sessions = await api(`/exercise?start=${start}&end=${end}`);
+  const weeks = Array.from({ length: weeksN }, (_, i) => addDays(curWs, -7 * (weeksN - 1 - i)));
+  S.trainingData = { sessions, weeks, curWs };
+}
+function aggregateWeek(sessions, ws) {
+  const we = addDays(ws, 6);
+  const inWeek = sessions.filter(s => s.day >= ws && s.day <= we);
+  const byType = t => inWeek.filter(s => s.type === t);
+  const sumMin = arr => arr.reduce((a, s) => a + (s.duration_min || 0), 0);
+  const cardio = byType('cardio'), strength = byType('strength'), yoga = byType('yoga');
+  const med = byType('meditation'), pt = byType('pt');
+  const cardioMin = sumMin(cardio), yogaMin = sumMin(yoga), medMin = sumMin(med), ptMin = sumMin(pt);
+  return {
+    ws, we,
+    cardio: { sessions: cardio.length, min: cardioMin },
+    strength: { sessions: strength.length },
+    yoga: { sessions: yoga.length, min: yogaMin },
+    meditation: { days: new Set(med.map(s => s.day)).size, min: medMin },
+    pt: { days: new Set(pt.map(s => s.day)).size, min: ptMin },
+    totalMin: cardioMin + yogaMin + medMin + ptMin,
+  };
+}
+function weekLabel(ws) { return new Date(ws + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+function monthShort(ws) { return new Date(ws + 'T12:00:00').toLocaleDateString('en-US', { month: 'short' }); }
+function trainingMinutesChart(weeks, aggs, curWs) {
+  const n = weeks.length;
+  const w = 320, h = 190, padSide = 14, padTop = 10, gap = 2;
+  const chartBottom = 122, axisLabelY = 133, strengthY = 152;
+  const chartH = chartBottom - padTop;
+  const maxVal = Math.max(1, ...aggs.map(a => a.totalMin)) * 1.15;
+  const bw = (w - 2 * padSide) / n;
+  const barW = Math.max(bw - 6, 6);
+  const scale = v => (v / maxVal) * chartH;
+  let bars = '';
+  aggs.forEach((a, i) => {
+    const isCur = weeks[i] === curWs;
+    const x = padSide + i * bw + (bw - barW) / 2;
+    const present = TRAIN_SERIES.filter(s => s.min(a) > 0);
+    let y = chartBottom;
+    present.forEach((s, si) => {
+      const val = s.min(a);
+      const sh = Math.max(scale(val), 2);
+      const segTop = y - sh;
+      const isTop = si === present.length - 1;
+      const rx = isTop ? 4 : 0;
+      const fill = isCur ? 'none' : s.color;
+      const stroke = isCur ? s.color : 'none';
+      const cnt = s.count(a);
+      const cntLabel = sh >= 16 && cnt
+        ? `<text x="${x + barW / 2}" y="${segTop + sh / 2 + 3}" font-size="9" text-anchor="middle" fill="${isCur ? 'var(--text)' : '#fff'}">${cnt}</text>`
+        : '';
+      bars += `<g tabindex="0"><title>${s.label} · ${weekLabel(weeks[i])}: ${val} min, ${cnt} ${s.key === 'meditation' || s.key === 'pt' ? 'day' + (cnt === 1 ? '' : 's') : 'session' + (cnt === 1 ? '' : 's')}</title>` +
+        `<rect x="${x}" y="${segTop}" width="${barW}" height="${sh}" rx="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${isCur ? 1.5 : 0}"/>${cntLabel}</g>`;
+      y = segTop - gap;
+    });
+    // x-axis
+    let axisLabel = '';
+    if (n <= 6) {
+      axisLabel = `<text x="${x + barW / 2}" y="${axisLabelY}" font-size="7.5" text-anchor="middle" fill="var(--muted)">${weekLabel(weeks[i])}</text>`;
+    } else if (i === 0 || monthShort(weeks[i]) !== monthShort(weeks[i - 1])) {
+      axisLabel = `<text x="${x + barW / 2}" y="${axisLabelY}" font-size="7.5" text-anchor="middle" fill="var(--muted)">${monthShort(weeks[i])}</text>`;
+    }
+    // strength row
+    const stCount = a.strength.sessions;
+    bars += `<g tabindex="0"><title>Strength · ${weekLabel(weeks[i])}: ${stCount} session${stCount === 1 ? '' : 's'}</title>` +
+      `<text x="${x + barW / 2}" y="${strengthY}" font-size="8.5" text-anchor="middle" fill="var(--text)">${stCount || '–'}</text></g>${axisLabel}`;
+  });
+  return `<svg viewBox="0 0 ${w} ${h}" class="chart">
+    <text x="${padSide - 8}" y="${strengthY}" font-size="9" text-anchor="start">🏋️</text>
+    ${bars}
+  </svg>
+  <div class="trainlegend">
+    ${TRAIN_SERIES.map(s => `<span class="leg"><span class="legdot" style="background:${s.color}"></span>${s.label}</span>`).join('')}
+  </div>`;
+}
+function cardioMixCard(sessions) {
+  const cardio = sessions.filter(s => s.type === 'cardio');
+  if (!cardio.length) return `<div class="card"><h3>Cardio mix</h3><div class="empty">No cardio in this range</div></div>`;
+  const order = ['Run', 'Bike', 'Hike', 'Swim', 'Row'];
+  const byActivity = {};
+  cardio.forEach(s => { const a = s.activity || 'Other'; byActivity[a] = (byActivity[a] || 0) + (s.duration_min || 0); });
+  const keys = [...order.filter(k => byActivity[k]), ...Object.keys(byActivity).filter(k => !order.includes(k))];
+  const max = Math.max(...keys.map(k => byActivity[k]), 1);
+  const rows = keys.map(k => `<div class="hbar-row"><div class="hbar-label">${esc(k)}</div>
+    <div class="hbar-track"><div class="hbar-fill" style="width:${(byActivity[k] / max) * 100}%;background:var(--s-cardio)"></div></div>
+    <div class="hbar-val">${byActivity[k]}m</div></div>`).join('');
+  return `<div class="card"><h3>Cardio mix</h3>${rows}</div>`;
+}
+function yogaMixCard(sessions) {
+  const yoga = sessions.filter(s => s.type === 'yoga');
+  if (!yoga.length) return `<div class="card"><h3>Yoga</h3><div class="empty">No yoga in this range</div></div>`;
+  const studioMin = yoga.filter(s => s.location === 'Studio').reduce((a, s) => a + (s.duration_min || 0), 0);
+  const homeMin = yoga.reduce((a, s) => a + (s.duration_min || 0), 0) - studioMin;
+  const total = studioMin + homeMin || 1;
+  const styleTally = {};
+  yoga.forEach(s => { const st = s.style || 'Other'; styleTally[st] = (styleTally[st] || 0) + 1; });
+  const styleOrder = ['Vinyasa', 'Hot', 'Other'];
+  const styleKeys = [...styleOrder.filter(k => styleTally[k]), ...Object.keys(styleTally).filter(k => !styleOrder.includes(k))];
+  return `<div class="card"><h3>Yoga</h3>
+    <div class="splitbar"><div style="width:${(studioMin / total) * 100}%;background:var(--s-yoga)"></div><div style="width:${(homeMin / total) * 100}%;background:var(--chip)"></div></div>
+    <div class="s muted">Studio ${studioMin}m · Home ${homeMin}m</div>
+    <div class="styletally" style="margin-top:8px">${styleKeys.map(k => `<span>${esc(k)} ${styleTally[k]}</span>`).join('')}</div>
+  </div>`;
+}
+function habitStatTile(label, icon, days, minutes, completedWeeksN) {
+  if (!completedWeeksN) return `<div class="card"><h3>${label}</h3><div class="empty">No completed weeks in this range</div></div>`;
+  const minPerDay = days > 0 ? Math.round(minutes / days) : 0;
+  const daysPerWeek = (days / completedWeeksN).toFixed(1);
+  return `<div class="card"><h3>${icon} ${label}</h3>
+    <div class="stattile">
+      <div><div class="big">${minPerDay}</div><div class="s muted">min/day avg</div></div>
+      <div><div class="big">${daysPerWeek}</div><div class="s muted">days/wk avg</div></div>
+    </div>
+  </div>`;
+}
+function trainingTableHTML(weeks, aggs, curWs) {
+  const rows = weeks.map((ws, i) => {
+    const a = aggs[i];
+    const mark = ws === curWs ? '*' : '';
+    return `<tr>
+      <td>${weekLabel(ws)}${mark}</td>
+      <td>${a.cardio.sessions}/${a.cardio.min}m</td>
+      <td>${a.strength.sessions}</td>
+      <td>${a.yoga.sessions}/${a.yoga.min}m</td>
+      <td>${a.meditation.days}/${a.meditation.min}m</td>
+      <td>${a.pt.days}/${a.pt.min}m</td>
+      <td>${a.totalMin}m</td>
+    </tr>`;
+  }).join('');
+  return `<details class="card"><summary>Table view</summary>
+    <div style="overflow-x:auto"><table class="traintable">
+      <thead><tr><th>Week</th><th>Cardio</th><th>Strength</th><th>Yoga</th><th>Meditation</th><th>PT</th><th>Total</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="s muted" style="margin-top:6px">* current week (in progress)</div>
+  </details>`;
+}
+function renderTrainingTrends(m) {
+  if (!S.trainingData) {
+    m.innerHTML = `<div class="seg trendseg"><button onclick="setTrendsTab('food')">Food</button><button class="on">Training</button></div><div class="empty">Loading…</div>`;
+    loadTrainingTrends().then(render).catch(e => { toast('Error: ' + e.message); S.trainingData = { sessions: [], weeks: [], curWs: weekStart(today()) }; });
+    return;
+  }
+  const { sessions, weeks, curWs } = S.trainingData;
+  const aggs = weeks.map(ws => aggregateWeek(sessions, ws));
+  const completedWeeks = weeks.filter(ws => ws !== curWs);
+  const completedAggs = completedWeeks.map(ws => aggregateWeek(sessions, ws));
+  const medDays = completedAggs.reduce((a, x) => a + x.meditation.days, 0);
+  const medMin = completedAggs.reduce((a, x) => a + x.meditation.min, 0);
+  const ptDays = completedAggs.reduce((a, x) => a + x.pt.days, 0);
+  const ptMin = completedAggs.reduce((a, x) => a + x.pt.min, 0);
+  m.innerHTML = `
+    <div class="filterrow">
+      <div class="seg">
+        <button onclick="setTrendsTab('food')">Food</button>
+        <button class="on">Training</button>
+      </div>
+      <div class="seg">
+        <button class="${S.trainingRange === '2wk' ? 'on' : ''}" onclick="setTrainingRange('2wk')">2 wk</button>
+        <button class="${S.trainingRange === '6wk' ? 'on' : ''}" onclick="setTrainingRange('6wk')">6 wk</button>
+        <button class="${S.trainingRange === '12wk' ? 'on' : ''}" onclick="setTrainingRange('12wk')">12 wk</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Active minutes per week</h3>
+      ${trainingMinutesChart(weeks, aggs, curWs)}
+    </div>
+    <div class="mixrow">
+      ${cardioMixCard(sessions)}
+      ${yogaMixCard(sessions)}
+      ${habitStatTile('Meditation', '🪷', medDays, medMin, completedWeeks.length)}
+      ${habitStatTile('PT', '🩼', ptDays, ptMin, completedWeeks.length)}
+    </div>
+    ${trainingTableHTML(weeks, aggs, curWs)}
+  `;
+}
 function renderTrends(m) {
+  if (S.trendsTab === 'training') { renderTrainingTrends(m); return; }
   if (!S.trendRows) {
     m.innerHTML = '<div class="empty">Loading…</div>';
     loadTrends().then(render).catch(e => { toast('Error: ' + e.message); S.trendRows = []; });
@@ -1223,9 +1533,15 @@ function renderTrends(m) {
   const scored = completed.filter(r => r.score != null);
   const avgScore = scored.length ? Math.round(scored.reduce((s, r) => s + r.score, 0) / scored.length) : null;
   m.innerHTML = `
-    <div class="seg trendseg">
-      <button class="${S.trendsRange === 'week' ? 'on' : ''}" onclick="setTrendsRange('week')">Week</button>
-      <button class="${S.trendsRange === 'month' ? 'on' : ''}" onclick="setTrendsRange('month')">Month</button>
+    <div class="filterrow">
+      <div class="seg">
+        <button class="on">Food</button>
+        <button onclick="setTrendsTab('training')">Training</button>
+      </div>
+      <div class="seg trendseg">
+        <button class="${S.trendsRange === 'week' ? 'on' : ''}" onclick="setTrendsRange('week')">Week</button>
+        <button class="${S.trendsRange === 'month' ? 'on' : ''}" onclick="setTrendsRange('month')">Month</button>
+      </div>
     </div>
     <div class="card">
       <h3>Calories</h3>
@@ -1276,6 +1592,8 @@ function renderSettings(m) {
       <input type="number" id="setYoga" value="${s.yoga_weekly_target ?? ''}">
       <label class="f">Meditation days / week</label>
       <input type="number" id="setMedDays" value="${s.meditation_weekly_days ?? ''}">
+      <label class="f">PT days / week</label>
+      <input type="number" id="setPTDays" value="${s.pt_weekly_days ?? ''}">
       <div class="dlg-actions"><button class="btn primary" onclick="saveSettings()">Save</button></div>
     </div>
     <div class="card">
@@ -1299,6 +1617,7 @@ async function saveSettings() {
     strength_weekly_target: parseInt($('#setStrength').value, 10) || 0,
     yoga_weekly_target: parseInt($('#setYoga').value, 10) || 0,
     meditation_weekly_days: parseInt($('#setMedDays').value, 10) || 0,
+    pt_weekly_days: parseInt($('#setPTDays').value, 10) || 0,
   };
   try {
     S.settings = await api('/settings', { method: 'PUT', body });

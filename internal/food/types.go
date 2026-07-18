@@ -59,6 +59,7 @@ const (
 	ExerciseStrength   = "strength"
 	ExerciseYoga       = "yoga"
 	ExerciseMeditation = "meditation"
+	ExercisePT         = "pt"
 )
 
 const (
@@ -69,7 +70,7 @@ const (
 )
 
 var validExerciseTypes = map[string]bool{
-	ExerciseCardio: true, ExerciseStrength: true, ExerciseYoga: true, ExerciseMeditation: true,
+	ExerciseCardio: true, ExerciseStrength: true, ExerciseYoga: true, ExerciseMeditation: true, ExercisePT: true,
 }
 var validExerciseInputKinds = map[string]bool{
 	ExerciseInputTap: true, ExerciseInputText: true, ExerciseInputVoice: true, ExerciseInputImport: true,
@@ -152,6 +153,7 @@ type Settings struct {
 	StrengthWeeklyTarget int       `json:"strength_weekly_target"`
 	YogaWeeklyTarget     int       `json:"yoga_weekly_target"`
 	MeditationWeeklyDays int       `json:"meditation_weekly_days"`
+	PTWeeklyDays         int       `json:"pt_weekly_days"`
 	UpdatedAt            time.Time `json:"updated_at,omitempty"`
 }
 
@@ -204,14 +206,26 @@ type RangeDay struct {
 	OverTarget bool   `json:"over_target"`
 }
 
+// Parse result kinds: the one log bar understands both food and exercise
+// (phase E4), and the parse result carries a discriminator so the PWA knows
+// which confirm flow to show.
+const (
+	ParseKindMeal     = "meal"
+	ParseKindExercise = "exercise"
+)
+
 // ParseResult is the draft returned by the AI parse endpoints (phase 3+).
 // Items use the same shape as MealItem so the client can edit the draft and
-// POST it to /api/meals unchanged.
+// POST it to /api/meals unchanged. Kind defaults to "meal" so existing
+// behavior is unchanged; Exercise is populated instead of Items when Kind is
+// "exercise" (phase E4 natural-language exercise logging).
 type ParseResult struct {
-	Items   []MealItem      `json:"items"`
-	Notes   string          `json:"notes"`
-	AIModel string          `json:"ai_model"`
-	AIRaw   json.RawMessage `json:"ai_raw,omitempty"`
+	Kind     string            `json:"kind"`
+	Items    []MealItem        `json:"items"`
+	Exercise []ExerciseSession `json:"exercise,omitempty"`
+	Notes    string            `json:"notes"`
+	AIModel  string            `json:"ai_model"`
+	AIRaw    json.RawMessage   `json:"ai_raw,omitempty"`
 }
 
 // Favorite is a reusable meal template: a named snapshot of items that can

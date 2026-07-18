@@ -210,7 +210,7 @@ func (s *Service) UpdateSettings(ctx context.Context, in *Settings) (*Settings, 
 	if in.WeightTargetG != nil && *in.WeightTargetG <= 0 {
 		return nil, fmt.Errorf("invalid: weight_target_g must be positive")
 	}
-	if in.CardioWeeklyTarget < 0 || in.StrengthWeeklyTarget < 0 || in.YogaWeeklyTarget < 0 || in.MeditationWeeklyDays < 0 {
+	if in.CardioWeeklyTarget < 0 || in.StrengthWeeklyTarget < 0 || in.YogaWeeklyTarget < 0 || in.MeditationWeeklyDays < 0 || in.PTWeeklyDays < 0 {
 		return nil, fmt.Errorf("invalid: weekly targets must be non-negative")
 	}
 	if err := s.store.UpdateSettings(ctx, in); err != nil {
@@ -221,10 +221,52 @@ func (s *Service) UpdateSettings(ctx context.Context, in *Settings) (*Settings, 
 
 // ---- exercise ----
 
+// ExerciseFieldErrors checks the per-type field requirements settled in the
+// design spike: cardio needs activity+duration, yoga needs
+// location+style+duration, meditation/pt need duration, strength needs
+// location and must NOT have a duration (no duration field for it yet).
+// Exported so the AI parser (phase E4 natural-language logging) can flag an
+// incomplete parsed session in the draft without duplicating these rules.
+func ExerciseFieldErrors(e ExerciseSession) (errs []string) {
+	switch e.Type {
+	case ExerciseCardio:
+		if e.Activity == nil || strings.TrimSpace(*e.Activity) == "" {
+			errs = append(errs, "cardio requires activity")
+		}
+		if e.DurationMin == nil || *e.DurationMin <= 0 {
+			errs = append(errs, "cardio requires duration_min > 0")
+		}
+	case ExerciseYoga:
+		if e.Location == nil || strings.TrimSpace(*e.Location) == "" {
+			errs = append(errs, "yoga requires location")
+		}
+		if e.Style == nil || strings.TrimSpace(*e.Style) == "" {
+			errs = append(errs, "yoga requires style")
+		}
+		if e.DurationMin == nil || *e.DurationMin <= 0 {
+			errs = append(errs, "yoga requires duration_min > 0")
+		}
+	case ExerciseMeditation:
+		if e.DurationMin == nil || *e.DurationMin <= 0 {
+			errs = append(errs, "meditation requires duration_min > 0")
+		}
+	case ExercisePT:
+		if e.DurationMin == nil || *e.DurationMin <= 0 {
+			errs = append(errs, "pt requires duration_min > 0")
+		}
+	case ExerciseStrength:
+		if e.Location == nil || strings.TrimSpace(*e.Location) == "" {
+			errs = append(errs, "strength requires location")
+		}
+		if e.DurationMin != nil {
+			errs = append(errs, "strength must not have duration_min")
+		}
+	}
+	return errs
+}
+
 // validateExercise checks day/type/input_kind enums and the per-type field
-// requirements settled in the design spike: cardio needs activity+duration,
-// yoga needs location+style+duration, meditation needs duration, strength
-// needs location and must NOT have a duration (no duration field for it yet).
+// requirements (see ExerciseFieldErrors).
 func validateExercise(e *ExerciseSession) error {
 	if err := validDate(e.Day); err != nil {
 		return err
@@ -241,35 +283,8 @@ func validateExercise(e *ExerciseSession) error {
 	if e.DurationMin != nil && *e.DurationMin < 0 {
 		return fmt.Errorf("invalid: duration_min must be non-negative")
 	}
-	switch e.Type {
-	case ExerciseCardio:
-		if e.Activity == nil || strings.TrimSpace(*e.Activity) == "" {
-			return fmt.Errorf("invalid: cardio requires activity")
-		}
-		if e.DurationMin == nil || *e.DurationMin <= 0 {
-			return fmt.Errorf("invalid: cardio requires duration_min > 0")
-		}
-	case ExerciseYoga:
-		if e.Location == nil || strings.TrimSpace(*e.Location) == "" {
-			return fmt.Errorf("invalid: yoga requires location")
-		}
-		if e.Style == nil || strings.TrimSpace(*e.Style) == "" {
-			return fmt.Errorf("invalid: yoga requires style")
-		}
-		if e.DurationMin == nil || *e.DurationMin <= 0 {
-			return fmt.Errorf("invalid: yoga requires duration_min > 0")
-		}
-	case ExerciseMeditation:
-		if e.DurationMin == nil || *e.DurationMin <= 0 {
-			return fmt.Errorf("invalid: meditation requires duration_min > 0")
-		}
-	case ExerciseStrength:
-		if e.Location == nil || strings.TrimSpace(*e.Location) == "" {
-			return fmt.Errorf("invalid: strength requires location")
-		}
-		if e.DurationMin != nil {
-			return fmt.Errorf("invalid: strength must not have duration_min")
-		}
+	if errs := ExerciseFieldErrors(*e); len(errs) > 0 {
+		return fmt.Errorf("invalid: %s", strings.Join(errs, "; "))
 	}
 	return nil
 }

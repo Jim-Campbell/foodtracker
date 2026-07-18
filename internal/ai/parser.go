@@ -113,6 +113,10 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 			p.log.Info("parse done", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
 			return p.finish(in, resp.Model, messages, cache)
 		}
+		if in, ok := extractLogExercise(resp.Content); ok {
+			p.log.Info("parse done (exercise)", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
+			return p.finishExercise(in, resp.Model, messages)
+		}
 
 		// A long-running server tool (web search) pauses the turn; replay the
 		// conversation as-is so the API resumes it.
@@ -132,27 +136,33 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 	}
 
 	messages = append(messages, UserMessage(TextBlock(
-		"You've used all available lookup rounds. Call record_meal now with your best assessment given everything so far -- estimate anything still uncertain.")))
+		"You've used all available lookup rounds. Call record_meal (food) or log_exercise (workout) now with your best assessment given everything so far -- estimate anything still uncertain.")))
 	t0 := time.Now()
 	resp, err := p.client.CreateMessage(ctx, Request{
-		Model:      model,
-		System:     system,
-		Messages:   messages,
-		Tools:      []Tool{{Name: toolRecordMeal, Description: "Submit the final parsed meal.", InputSchema: recordMealSchema}},
-		ToolChoice: &ToolChoice{Type: "tool", Name: toolRecordMeal},
+		Model:    model,
+		System:   system,
+		Messages: messages,
+		Tools: []Tool{
+			{Name: toolRecordMeal, Description: "Submit the final parsed meal.", InputSchema: recordMealSchema},
+			{Name: toolLogExercise, Description: "Submit the final parsed workout session(s).", InputSchema: logExerciseSchema},
+		},
+		ToolChoice: &ToolChoice{Type: "any"},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("ai parse forced record_meal: %w", err)
+		return nil, fmt.Errorf("ai parse forced terminal tool: %w", err)
 	}
 	p.logRound(maxToolRounds+1, t0, resp)
 	messages = append(messages, Message{Role: RoleAssistant, Content: resp.Content})
 
-	in, ok := extractRecordMeal(resp.Content)
-	if !ok {
-		return nil, fmt.Errorf("ai did not return a meal record")
+	if in, ok := extractRecordMeal(resp.Content); ok {
+		p.log.Info("parse done (forced)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
+		return p.finish(in, resp.Model, messages, cache)
 	}
-	p.log.Info("parse done (forced)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
-	return p.finish(in, resp.Model, messages, cache)
+	if in, ok := extractLogExercise(resp.Content); ok {
+		p.log.Info("parse done (forced exercise)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
+		return p.finishExercise(in, resp.Model, messages)
+	}
+	return nil, fmt.Errorf("ai did not return a meal or exercise record")
 }
 
 // logRound records one model call's latency and token accounting; a slow
@@ -211,6 +221,28 @@ func extractRecordMeal(content []json.RawMessage) (*recordMealInput, bool) {
 			continue
 		}
 		var in recordMealInput
+		if err := json.Unmarshal(b.Input, &in); err != nil {
+			return nil, false
+		}
+		return &in, true
+	}
+	return nil, false
+}
+
+// logExerciseInput reuses food.ExerciseSession's JSON shape directly: the
+// tool schema only ever populates type/activity/location/style/duration_min/
+// note, so the other fields (Day, InputKind, ...) stay zero -- the PWA fills
+// those in when it saves the confirmed draft to POST /api/exercise.
+type logExerciseInput struct {
+	Sessions []food.ExerciseSession `json:"sessions"`
+}
+
+func extractLogExercise(content []json.RawMessage) (*logExerciseInput, bool) {
+	for _, b := range decodeBlocks(content) {
+		if b.Type != "tool_use" || b.Name != toolLogExercise {
+			continue
+		}
+		var in logExerciseInput
 		if err := json.Unmarshal(b.Input, &in); err != nil {
 			return nil, false
 		}
@@ -366,10 +398,37 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message, c
 	}
 
 	return &food.ParseResult{
+		Kind:    food.ParseKindMeal,
 		Items:   in.Items,
 		Notes:   notes,
 		AIModel: model,
 		AIRaw:   raw,
+	}, nil
+}
+
+// finishExercise validates each parsed session's per-type required fields
+// (the AI never writes to the DB, so an incomplete session just becomes
+// something Jim completes in the confirm sheet) and packages the trace as
+// ai_raw, mirroring finish().
+func (p *Parser) finishExercise(in *logExerciseInput, model string, messages []Message) (*food.ParseResult, error) {
+	var extraNotes []string
+	for i, s := range in.Sessions {
+		if errs := food.ExerciseFieldErrors(s); len(errs) > 0 {
+			extraNotes = append(extraNotes, fmt.Sprintf("session %d (%s): %s", i+1, s.Type, strings.Join(errs, "; ")))
+		}
+	}
+
+	raw, err := json.Marshal(messages)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ai trace: %w", err)
+	}
+
+	return &food.ParseResult{
+		Kind:     food.ParseKindExercise,
+		Exercise: in.Sessions,
+		Notes:    strings.Join(extraNotes, " "),
+		AIModel:  model,
+		AIRaw:    raw,
 	}, nil
 }
 
@@ -385,9 +444,11 @@ func (p *Parser) systemPrompt(day string) string {
 - Any other brand name (packaged goods, store brands, local restaurants, bakery items): if usda_search has no confident match for the specific product, use web_search to find the brand's published nutrition BEFORE falling back to an estimate -- Jim values accuracy over speed. Estimate only when the web has nothing authoritative either.
 - For every web-sourced item set source to "web" and source_ref to the URL the numbers came from.`
 	}
-	return fmt.Sprintf(`You are the meal-parsing assistant for Jim's personal food and weight tracker. You turn a casual description (typed, dictated, or from a photo) of what he ate into structured, nutrition-grounded meal items. This is a one-shot parse, not a conversation: never ask a clarifying question, just make the most reasonable assumption and say so in notes.
+	return fmt.Sprintf(`You are the logging assistant for Jim's personal food, weight, and exercise tracker. You turn a casual description (typed, dictated, or from a photo) into structured, grounded records. This is a one-shot parse, not a conversation: never ask a clarifying question, just make the most reasonable assumption and say so in notes.
 
-Jim is logging this meal for day: %s.
+Jim is logging for day: %s.
+
+CLASSIFY FIRST -- the app tracks both food and exercise through this one input. Decide which this input describes, then call exactly ONE terminal tool: record_meal for food/drink, log_exercise for a workout or practice ("30 min run", "hot yoga at the studio, 60 minutes", "hike after a swim", "did my PT for 20 minutes", "lifted at the gym"). Photos are always food (a meal, label, barcode, or plate) -- never exercise. Exercise inputs need no usda_search/off_barcode lookups; fill sessions directly from the text using the log_exercise tool's field guidance (map casual phrasing to the known chip vocab where obvious -- "lifted"/"gym" -> strength, "ran"/"jog" -> cardio Run, "spin"/"cycling" -> Bike, "swam" -> Swim, "PT"/"physical therapy"/"rehab exercises"/"my stretches" -> pt; infer duration_min from stated minutes; leave a field null if truly unstated and let Jim fill it in the confirm sheet).
 
 DIET FRAMEWORK -- the source of truth for the "tier" field on every item. Apply it verbatim; do not reinterpret or add your own nutrition opinions on top of it.
 
@@ -424,6 +485,6 @@ PHOTOS -- when the first message includes an image, decide which of these it is 
 
 FINISHING
 - notes is a glance-line for Jim, not a report: at most one short sentence, and only for something he couldn't guess himself (an unusual portion assumption, ambiguous wording, a failed lookup). When the read was straightforward, return an empty string. Never re-list the items or narrate your process.
-- Never write prose around tool calls. A response that calls a tool -- including record_meal -- must contain ONLY the tool call(s), no text before or after. Nobody reads that text; every token of it just makes the parse slower.
-- Call record_meal exactly once, as your final action, to submit the parsed items.`, day, docs.DietFramework, webGuidance)
+- Never write prose around tool calls. A response that calls a tool -- including record_meal/log_exercise -- must contain ONLY the tool call(s), no text before or after. Nobody reads that text; every token of it just makes the parse slower.
+- Call exactly one of record_meal or log_exercise, as your final action, to submit the parse.`, day, docs.DietFramework, webGuidance)
 }

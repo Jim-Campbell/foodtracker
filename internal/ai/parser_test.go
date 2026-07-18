@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -336,8 +337,15 @@ func TestParserRoundCapForcesRecordMeal(t *testing.T) {
 		t.Fatalf("CreateMessage called %d times, want %d (round cap + forced final call)", len(messenger.calls), wantCalls)
 	}
 	forced := messenger.calls[wantCalls-1]
-	if forced.ToolChoice == nil || forced.ToolChoice.Type != "tool" || forced.ToolChoice.Name != toolRecordMeal {
-		t.Errorf("forced final call ToolChoice = %+v, want a forced record_meal choice", forced.ToolChoice)
+	if forced.ToolChoice == nil || forced.ToolChoice.Type != "any" {
+		t.Errorf("forced final call ToolChoice = %+v, want a forced any-tool choice", forced.ToolChoice)
+	}
+	var forcedNames []string
+	for _, tool := range forced.Tools {
+		forcedNames = append(forcedNames, tool.Name)
+	}
+	if !slices.Contains(forcedNames, toolRecordMeal) || !slices.Contains(forcedNames, toolLogExercise) {
+		t.Errorf("forced final call Tools = %v, want both record_meal and log_exercise offered", forcedNames)
 	}
 	if !strings.Contains(result.Notes, "forced after exhausting lookups") {
 		t.Errorf("Notes = %q, want the forced-round record_meal notes", result.Notes)
@@ -441,3 +449,47 @@ func TestParserValidationWiring(t *testing.T) {
 		t.Errorf("Notes = %q, want it to contain the Atwater mismatch warning", result.Notes)
 	}
 }
+
+// TestParserLogExercise: a workout phrase should call log_exercise instead of
+// record_meal, yielding a ParseResult with Kind "exercise" and no USDA
+// lookups. Covers "hike then a swim" yielding two cardio sessions.
+func TestParserLogExercise(t *testing.T) {
+	dur := 30
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolLogExercise, logExerciseInput{
+				Sessions: []food.ExerciseSession{
+					{Type: food.ExerciseCardio, Activity: strPtr("Hike"), DurationMin: &dur},
+					{Type: food.ExerciseCardio, Activity: strPtr("Swim"), DurationMin: &dur},
+				},
+			})},
+		},
+	}}
+	usda := &fakeUSDA{}
+	off := &fakeOFF{}
+
+	p := NewParser(messenger, usda, off, "", true, slog.Default())
+	result, err := p.ParseText(context.Background(), "hike then a swim this morning", "2026-07-17", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+
+	if result.Kind != food.ParseKindExercise {
+		t.Errorf("Kind = %q, want %q", result.Kind, food.ParseKindExercise)
+	}
+	if len(result.Exercise) != 2 {
+		t.Fatalf("Exercise = %+v, want 2 sessions", result.Exercise)
+	}
+	if len(result.Items) != 0 {
+		t.Errorf("Items = %+v, want none for an exercise parse", result.Items)
+	}
+	if usda.called || off.called {
+		t.Error("exercise parse should not call usda_search or off_barcode")
+	}
+	if len(result.AIRaw) == 0 {
+		t.Error("expected AIRaw to hold the full trace")
+	}
+}
+
+func strPtr(s string) *string { return &s }

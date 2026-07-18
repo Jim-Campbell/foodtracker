@@ -26,7 +26,7 @@ func newFakeStore() *fakeStore {
 		weights: map[string]Weight{},
 		settings: Settings{
 			CalorieTarget: 1800, ProteinTargetMg: 165000,
-			CardioWeeklyTarget: 3, StrengthWeeklyTarget: 2, YogaWeeklyTarget: 2, MeditationWeeklyDays: 7,
+			CardioWeeklyTarget: 3, StrengthWeeklyTarget: 2, YogaWeeklyTarget: 2, MeditationWeeklyDays: 7, PTWeeklyDays: 7,
 		},
 		favorites: map[int64]*Favorite{},
 		exercise:  map[int64]*ExerciseSession{},

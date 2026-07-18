@@ -360,10 +360,12 @@ func (d *DB) GetSettings(ctx context.Context) (*food.Settings, error) {
 	err := d.pool.QueryRow(ctx, `
 		SELECT calorie_target, protein_target_mg, weight_target_g,
 		       cardio_weekly_target, strength_weekly_target, yoga_weekly_target, meditation_weekly_days,
+		       pt_weekly_days,
 		       updated_at
 		FROM settings WHERE id = 1`).
 		Scan(&s.CalorieTarget, &s.ProteinTargetMg, &s.WeightTargetG,
 			&s.CardioWeeklyTarget, &s.StrengthWeeklyTarget, &s.YogaWeeklyTarget, &s.MeditationWeeklyDays,
+			&s.PTWeeklyDays,
 			&s.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get settings: %w", err)
@@ -375,10 +377,12 @@ func (d *DB) UpdateSettings(ctx context.Context, s *food.Settings) error {
 	_, err := d.pool.Exec(ctx, `
 		UPDATE settings SET calorie_target = $1, protein_target_mg = $2, weight_target_g = $3,
 		    cardio_weekly_target = $4, strength_weekly_target = $5, yoga_weekly_target = $6, meditation_weekly_days = $7,
+		    pt_weekly_days = $8,
 		    updated_at = NOW()
 		WHERE id = 1`,
 		s.CalorieTarget, s.ProteinTargetMg, s.WeightTargetG,
-		s.CardioWeeklyTarget, s.StrengthWeeklyTarget, s.YogaWeeklyTarget, s.MeditationWeeklyDays)
+		s.CardioWeeklyTarget, s.StrengthWeeklyTarget, s.YogaWeeklyTarget, s.MeditationWeeklyDays,
+		s.PTWeeklyDays)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)
 	}
