@@ -74,11 +74,78 @@ Hover/focus tooltips on every segment, strength count, and split-bar region
 (week label + breakdown). Tap targets ≥ the mark; keyboard-focusable
 (`tabindex`, focus ring). Respect `prefers-reduced-motion`.
 
+## Also: add Physical Therapy (PT) — a fifth type, mirroring meditation
+
+PT is a new tracked type that behaves **exactly like meditation**: a daily-habit
+row (did it + minutes), no activity/location/style. Because E1 (data) and E2
+(home card) were already built before PT was requested, this phase carries the
+full PT slice — data layer, home card retrofit, and trends — as one additive
+change. The rule of thumb: **wherever the code special-cases `meditation`, add a
+parallel `pt` case.** PT is calorie-independent like everything else here.
+
+### Data layer (E1 is already built — extend it)
+
+1. **Migration** `internal/db/migrations/006_exercise_pt.sql`:
+   ```sql
+   ALTER TABLE exercise_sessions DROP CONSTRAINT exercise_sessions_type_check;
+   ALTER TABLE exercise_sessions ADD CONSTRAINT exercise_sessions_type_check
+       CHECK (type IN ('cardio','strength','yoga','meditation','pt'));
+   ALTER TABLE settings ADD COLUMN pt_weekly_days INT NOT NULL DEFAULT 7;
+   ```
+   (`exercise_sessions_type_check` is the auto-generated name for E1's inline
+   CHECK — confirm with `psql -c '\d exercise_sessions'` before writing it.)
+   PT's weekly target defaults to **7 (daily)**, the same framing as meditation;
+   Jim tunes it in Settings.
+2. **Go:** add `ExercisePT = "pt"` beside `ExerciseMeditation` in
+   `internal/food/types.go` and to the `validExerciseTypes` map; add
+   `PTWeeklyDays int \`json:"pt_weekly_days"\`` to `Settings`. In
+   `internal/food/service.go`, `validateExercise` gets a `case ExercisePT:`
+   identical to the `ExerciseMeditation` case (requires `duration_min > 0`; no
+   activity/location/style); extend the `UpdateSettings` non-negative check to
+   include `PTWeeklyDays`. Thread `pt_weekly_days` through the settings
+   read/write SQL in `internal/db/store.go`. Mirror the meditation validation
+   test with a `pt` case.
+
+### Home card (retrofit the E2 Training card)
+
+3. Add a **PT habit row** to the Today Training card, identical in structure to
+   the meditation row: a 7-dot Mon–Sun daily row (filled per day with any PT
+   session, dashed on today if none), `daysDone/target` where target =
+   `pt_weekly_days`, met/green treatment when `daysDone >= target`, and the same
+   cross-week **"last:"** subtitle fallback. Place it directly below the
+   meditation row (the two habit rows sit together, after cardio/strength/yoga).
+   - Quick-log sheet: **Minutes** chips `[10 · 15 · 20 · 30 · 45]` (default 15 —
+     PT sessions run a bit longer than a sit), free-text allowed, `input_kind:
+     'tap'`, appends like every other type.
+   - Icon: use 🩼 as a **placeholder** — leave it easy to swap; Jim will pick the
+     final glyph.
+   - If the E2 meditation row hard-coded `/7`, parameterize both rows by their
+     setting (`meditation_weekly_days`, `pt_weekly_days`) so a changed target
+     shows correctly.
+4. **Settings:** add a "PT days per week" input beside the meditation-days input,
+   saved via `PUT /api/settings`.
+
+### Trends (this phase's core — PT joins the charts)
+
+5. **Active minutes per week:** PT becomes a **fourth stacked series** (cardio,
+   yoga, meditation, PT — strength still rides the count row below the axis, not
+   the stack). The in-segment count for PT is **days** (like meditation). Add PT
+   to the legend.
+6. **Mix cards:** add a **PT tile** mirroring the meditation tile — min/day
+   average and days/week average over completed weeks in the range.
+7. **Table view:** add a PT column (days / min), same shape as the meditation
+   column.
+8. **Color token:** add `--s-pt: #b5548f` (light) / `#c56ba0` (dark) to `:root`
+   and both theme overrides. This is CVD-validated as a set with the existing
+   four (worst adjacent ΔE 17.5 light / 12.4 dark, all ≥3:1 on their surfaces).
+   PT text still wears the app's text tokens, never the plum — identity comes
+   from the segment/dot beside it.
+
 ## Out of scope
 
-NL/voice logging (exercise phase 4), Garmin import, any change to the food
-trends charts or the calorie/score math. No heatmap (it was prototyped and
-cut).
+NL/voice logging (exercise phase 4 — PT is handled there), Garmin import, any
+change to the food trends charts or the calorie/score math. No heatmap (it was
+prototyped and cut).
 
 ## Acceptance checklist
 
@@ -94,4 +161,10 @@ and laptop width:
   selected range; meditation averages exclude the current week.
 - A colorblind check (or the table) can recover every value — nothing is
   color-only.
-- Dark mode: amber steps down, all four series stay distinct, text stays legible.
+- Dark mode: amber steps down, all five series (incl. PT plum) stay distinct,
+  text stays legible.
+- **PT:** `go build ./... && go test ./...` passes after migration 006 and the
+  Go additions. A PT session logs from the home card's new habit row (days/7),
+  its "last:" fallback works, `pt_weekly_days` is editable in Settings, and PT
+  appears both as a stacked-minutes segment and a mix tile with matching table
+  numbers.

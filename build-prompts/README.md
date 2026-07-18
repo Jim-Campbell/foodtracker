@@ -68,7 +68,7 @@ commit. Design is settled in the prototype artifact
 |---|---|---|
 | E1 | exercise-1-data-api.md | `exercise_sessions` schema, weekly targets, Store/service/API, tests |
 | E2 | exercise-2-home-logging.md | Today Training card, tap-log sheets, cross-week "last:", Settings targets |
-| E3 | exercise-3-trends.md | Trends → Food·Training view: weekly-minutes stack + strength row + mixes |
+| E3 | exercise-3-trends.md | Trends → Food·Training view; also adds **PT** (5th type, mirrors meditation) across data/home/trends |
 | E4 | exercise-4-nl-logging.md | Log bar understands workout phrases (`log_exercise` terminal tool) |
 
 E1 is curl-testable with no PWA. E3 and E4 both depend on E1–E2 but not on each

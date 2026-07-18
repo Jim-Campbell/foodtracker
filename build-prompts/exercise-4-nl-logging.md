@@ -22,7 +22,9 @@ endpoint or a brittle client-side keyword router:
    `record_meal` for food, `log_exercise` for workouts. Exercise inputs need no
    USDA/barcode lookups; the model fills sessions directly from the text (map
    casual phrasing to the known chip vocab where obvious — "lifted"/"gym" →
-   strength, "ran"/"jog" → cardio Run, "spin"/"cycling" → Bike, "swam" → Swim;
+   strength, "ran"/"jog" → cardio Run, "spin"/"cycling" → Bike, "swam" → Swim,
+   "PT"/"physical therapy"/"rehab exercises"/"my stretches" → pt (duration only,
+   like meditation);
    infer `duration_min` from stated minutes; leave a field null if truly
    unstated and let the user fill it in the confirm sheet). Keep the "no prose
    around tool calls" rule.
@@ -78,6 +80,7 @@ Server running with a real `ANTHROPIC_API_KEY` against a scratch DB:
   with `input_kind: 'text'`.
 - "hot yoga at the studio for an hour" → yoga / Studio / Hot / 60, editable.
 - "hike then a swim this morning" → **two** cardio sessions in one confirm sheet.
+- "did my PT for 20 minutes" → a `pt` session, duration 20, no other fields.
 - "greek yogurt and blueberries" still returns a **meal** draft (kind unchanged)
   and saves to `/api/meals` — the food path is untouched.
 - `go build ./... && go test ./...` passes (existing AI parser tests still green;
