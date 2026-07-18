@@ -339,7 +339,17 @@ const TABS = [['today', 'Today'], ['trends', 'Trends'], ['settings', 'Settings']
 function renderTabNav() {
   $('#tabnav').innerHTML = TABS.map(([id, label]) => `<button class="${S.view === id ? 'on' : ''}" onclick="goTab('${id}')">${label}</button>`).join('');
 }
-function goTab(view) { S.view = view; render(); }
+function goTab(view) {
+  // Tapping Today always snaps back to the current day, even if it's already
+  // the active tab -- otherwise there's no way back from a scrolled-back day
+  // except tapping the day-nav arrows one at a time.
+  if (view === 'today' && S.day !== today()) {
+    S.day = today(); S.summary = null; S.view = view; render();
+    loadDay(S.day).then(render).catch(e => toast('Error: ' + e.message));
+    return;
+  }
+  S.view = view; render();
+}
 
 // ---------- render dispatch ----------
 function render() {
