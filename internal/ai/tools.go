@@ -50,7 +50,7 @@ var recordMealSchema = json.RawMessage(`{
           "grams": { "type": ["integer", "null"], "description": "Estimated full-portion weight in grams." },
           "fraction_pct": {
             "type": "integer",
-            "description": "Percent of the full portion actually eaten, 1-100, default 100. A hint like 'half of this' sets this to 50 -- never pre-scale the nutrition values below."
+            "description": "Percent of the full portion actually eaten, 1-300, default 100. A hint like 'half of this' sets this to 50; 'I had three of these' sets it to 300 -- never pre-scale the nutrition values below."
           },
           "calories": { "type": "integer", "description": "Full-portion kcal, integer." },
           "protein_mg": { "type": "integer", "description": "Full-portion protein in milligrams." },

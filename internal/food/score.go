@@ -44,8 +44,8 @@ func ValidateItem(it MealItem) (errs []string, warnings []string) {
 	if it.Confidence != "" && !validConfidences[it.Confidence] {
 		errs = append(errs, fmt.Sprintf("invalid confidence: %q", it.Confidence))
 	}
-	if it.FractionPct < 1 || it.FractionPct > 100 {
-		errs = append(errs, "fraction_pct must be between 1 and 100")
+	if it.FractionPct < 1 || it.FractionPct > 300 {
+		errs = append(errs, "fraction_pct must be between 1 and 300")
 	}
 	if it.Calories < 0 || it.ProteinMg < 0 || it.CarbsMg < 0 || it.FatMg < 0 ||
 		it.FiberMg < 0 || it.SatFatMg < 0 || it.SugarMg < 0 || it.SodiumMg < 0 {

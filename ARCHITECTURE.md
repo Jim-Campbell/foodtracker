@@ -122,7 +122,7 @@ CREATE TABLE meal_items (
     brand         TEXT,
     quantity      TEXT NOT NULL DEFAULT '',      -- human description: "1 cup", "2 slices"
     grams         INT,                            -- estimated full-portion weight, NULL if unknown
-    fraction_pct  INT NOT NULL DEFAULT 100 CHECK (fraction_pct BETWEEN 1 AND 100),
+    fraction_pct  INT NOT NULL DEFAULT 100 CHECK (fraction_pct BETWEEN 1 AND 300),
     -- full-portion nutrition (as-eaten = value * fraction_pct / 100)
     calories      INT NOT NULL DEFAULT 0,        -- kcal
     protein_mg    BIGINT NOT NULL DEFAULT 0,
@@ -314,7 +314,7 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
 ### Validation (server-side, deterministic)
 
 Before returning a draft, Go validates every item: tier is a known enum;
-`fraction_pct` in 1..100; all amounts non-negative; **Atwater check** —
+`fraction_pct` in 1..300; all amounts non-negative; **Atwater check** —
 `protein_g*4 + carbs_g*4 + fat_g*9` must be within ±30% of `calories` (else
 clamp confidence to `low` and append a warning to `notes`). Never trust AI
 arithmetic for totals — totals are always recomputed in Go/SQL.

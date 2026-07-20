@@ -65,6 +65,13 @@ button.btn.ghost { background: none; color: var(--muted); }
   background: var(--chip); color: var(--text);
 }
 .chips button.on { background: var(--chip-on); color: #fff; font-weight: 600; }
+.qty { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; margin: 6px 0 2px; }
+.qty button {
+  border: none; background: var(--chip); color: var(--text);
+  width: 34px; height: 30px; font-size: 1.15rem; line-height: 1; cursor: pointer;
+}
+.qty button:disabled { opacity: .35; cursor: default; }
+.qty .val { min-width: 48px; text-align: center; font-size: .85rem; font-weight: 600; padding: 0 6px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; width: 100%; }
 .seg button { flex: 1; border: none; background: var(--card); color: var(--text); padding: 8px 10px; font-size: .82rem; cursor: pointer; border-right: 1px solid var(--line); }
 .seg button:last-child { border-right: none; }
@@ -1097,10 +1104,32 @@ function itemTotals(items) {
     return t;
   }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
 }
-function fracChips(it, idx) {
-  const cur = it ? it.fraction_pct : null;
-  const opts = [[25, '¼'], [50, '½'], [75, '¾'], [100, 'All']];
-  return `<div class="chips">${opts.map(([v, l]) => `<button class="${cur === v ? 'on' : ''}" onclick="${idx === -1 ? `setAllFraction(${v})` : `setItemFraction(${idx},${v})`}">${l}</button>`).join('')}</div>`;
+// Discrete portion stops (percent of full portion): ¼ ½ ¾ 1 1½ 2 3.
+const QTY_STOPS = [25, 50, 75, 100, 150, 200, 300];
+const QTY_MIN = QTY_STOPS[0], QTY_MAX = QTY_STOPS[QTY_STOPS.length - 1];
+// Move to the neighbouring stop in direction dir (+1/-1); snaps off-stop values.
+function nextStop(cur, dir) {
+  if (dir > 0) return QTY_STOPS.find(s => s > cur) ?? QTY_MAX;
+  return [...QTY_STOPS].reverse().find(s => s < cur) ?? QTY_MIN;
+}
+const FRAC_GLYPH = { 25: '¼', 50: '½', 75: '¾' };
+function fmtQty(pct) {
+  const whole = Math.floor(pct / 100), frac = FRAC_GLYPH[pct % 100] || '';
+  return `${whole || !frac ? whole : ''}${frac}×`;
+}
+function qtyStepper(it, idx) {
+  // Whole-meal control (idx === -1) shows the shared value if uniform, else "Mixed";
+  // its +/- step every item. Per-item control shows/steps that one item.
+  const vals = DRAFT.items.map(i => i.fraction_pct);
+  const cur = idx === -1 ? (vals.every(v => v === vals[0]) ? (vals[0] ?? 100) : null) : it.fraction_pct;
+  const stepFn = d => idx === -1 ? `stepAllFraction(${d})` : `stepItemFraction(${idx},${d})`;
+  const atMin = idx === -1 ? vals.every(v => v <= QTY_MIN) : cur <= QTY_MIN;
+  const atMax = idx === -1 ? vals.every(v => v >= QTY_MAX) : cur >= QTY_MAX;
+  return `<div class="qty">
+    <button onclick="${stepFn(-1)}" ${atMin ? 'disabled' : ''} title="Less">−</button>
+    <span class="val">${cur === null ? 'Mixed' : fmtQty(cur)}</span>
+    <button onclick="${stepFn(1)}" ${atMax ? 'disabled' : ''} title="More">+</button>
+  </div>`;
 }
 function draftItemRow(it, idx) {
   const eaten = k => Math.round(it[k] * it.fraction_pct / 100 / 1000);
@@ -1118,11 +1147,11 @@ function draftItemRow(it, idx) {
       <input type="number" class="gramsIn" value="${it.grams || ''}" placeholder="g" onchange="setDraftGrams(${idx},this.value)">
       <span class="s">${eatenCal} cal · ${macro(eaten('protein_mg'), 'protein', 'P')} · ${macro(eaten('carbs_mg'), 'carbs', 'C')} · ${macro(eaten('fat_mg'), 'fat', 'F')}</span>
     </div>
-    ${fracChips(it, idx)}
+    ${qtyStepper(it, idx)}
   </div>`;
 }
-function setItemFraction(idx, v) { DRAFT.items[idx].fraction_pct = v; renderDraftDialog(); }
-function setAllFraction(v) { DRAFT.items.forEach(it => it.fraction_pct = v); renderDraftDialog(); }
+function stepItemFraction(idx, dir) { const it = DRAFT.items[idx]; it.fraction_pct = nextStop(it.fraction_pct, dir); renderDraftDialog(); }
+function stepAllFraction(dir) { DRAFT.items.forEach(it => it.fraction_pct = nextStop(it.fraction_pct, dir)); renderDraftDialog(); }
 function removeDraftItem(idx) { DRAFT.items.splice(idx, 1); DRAFT.items.forEach((it, i) => it.position = i); renderDraftDialog(); }
 function setDraftGrams(idx, val) {
   const it = DRAFT.items[idx];
@@ -1146,7 +1175,7 @@ function draftDialogHTML() {
     <div class="itemlist">${DRAFT.items.map((it, idx) => draftItemRow(it, idx)).join('') || '<div class="empty">No items</div>'}</div>
     <div class="wholefrac">
       <span class="muted sm">Whole meal:</span>
-      ${fracChips(null, -1)}
+      ${qtyStepper(null, -1)}
     </div>
     <label class="f">Meal</label>
     <div class="seg">
