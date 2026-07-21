@@ -223,10 +223,11 @@ func (s *Service) UpdateSettings(ctx context.Context, in *Settings) (*Settings, 
 
 // ExerciseFieldErrors checks the per-type field requirements settled in the
 // design spike: cardio needs activity+duration, yoga needs
-// location+style+duration, meditation/pt need duration, strength needs
-// location and must NOT have a duration (no duration field for it yet).
-// Exported so the AI parser (phase E4 natural-language logging) can flag an
-// incomplete parsed session in the draft without duplicating these rules.
+// location+style+duration, meditation needs duration; strength and pt carry no
+// required fields beyond type (their note holds any detail) and must NOT have a
+// duration. Exported so the AI parser (phase E4 natural-language logging) can
+// flag an incomplete parsed session in the draft without duplicating these
+// rules.
 func ExerciseFieldErrors(e ExerciseSession) (errs []string) {
 	switch e.Type {
 	case ExerciseCardio:
@@ -251,15 +252,26 @@ func ExerciseFieldErrors(e ExerciseSession) (errs []string) {
 			errs = append(errs, "meditation requires duration_min > 0")
 		}
 	case ExercisePT:
-		if e.DurationMin == nil || *e.DurationMin <= 0 {
-			errs = append(errs, "pt requires duration_min > 0")
+		if e.DurationMin != nil {
+			errs = append(errs, "pt must not have duration_min")
 		}
 	case ExerciseStrength:
-		if e.Location == nil || strings.TrimSpace(*e.Location) == "" {
-			errs = append(errs, "strength requires location")
-		}
 		if e.DurationMin != nil {
 			errs = append(errs, "strength must not have duration_min")
+		}
+	}
+	// HR zones are cardio-only; keys must be "1".."5" and minutes non-negative.
+	if len(e.HRZones) > 0 {
+		if e.Type != ExerciseCardio {
+			errs = append(errs, "hr_zones only allowed on cardio")
+		}
+		for z, min := range e.HRZones {
+			if len(z) != 1 || z < "1" || z > "5" {
+				errs = append(errs, "hr_zones has invalid zone: "+z)
+			}
+			if min < 0 {
+				errs = append(errs, "hr_zones minutes must be non-negative")
+			}
 		}
 	}
 	return errs

@@ -22,6 +22,19 @@ func nullableRaw(raw json.RawMessage) any {
 	return []byte(raw)
 }
 
+// nullableZones marshals the HR-zone map to JSONB; an empty/nil map becomes SQL
+// NULL rather than an empty jsonb object.
+func nullableZones(z map[string]int) any {
+	if len(z) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(z)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
 // ---- meals ----
 
 func (d *DB) CreateMeal(ctx context.Context, m *food.Meal) error {
@@ -494,10 +507,10 @@ func (d *DB) RangeSummary(ctx context.Context, start, end string) ([]food.RangeD
 func (d *DB) CreateExercise(ctx context.Context, e *food.ExerciseSession) error {
 	var day time.Time
 	err := d.pool.QueryRow(ctx, `
-		INSERT INTO exercise_sessions (day, type, activity, location, style, duration_min, note, input_kind, ai_raw)
-		VALUES ($1::date,$2,$3,$4,$5,$6,$7,$8,$9)
+		INSERT INTO exercise_sessions (day, type, activity, location, style, duration_min, hr_zones, note, input_kind, ai_raw)
+		VALUES ($1::date,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING id, day, performed_at, created_at, updated_at`,
-		e.Day, e.Type, e.Activity, e.Location, e.Style, e.DurationMin, e.Note, e.InputKind, nullableRaw(e.AIRaw)).
+		e.Day, e.Type, e.Activity, e.Location, e.Style, e.DurationMin, nullableZones(e.HRZones), e.Note, e.InputKind, nullableRaw(e.AIRaw)).
 		Scan(&e.ID, &day, &e.PerformedAt, &e.CreatedAt, &e.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert exercise session: %w", err)
@@ -520,9 +533,9 @@ func (d *DB) GetExercise(ctx context.Context, id int64) (*food.ExerciseSession, 
 func (d *DB) UpdateExercise(ctx context.Context, e *food.ExerciseSession) error {
 	tag, err := d.pool.Exec(ctx, `
 		UPDATE exercise_sessions SET day=$1::date, type=$2, activity=$3, location=$4, style=$5,
-		    duration_min=$6, note=$7, input_kind=$8, ai_raw=$9, updated_at=NOW()
-		WHERE id=$10`,
-		e.Day, e.Type, e.Activity, e.Location, e.Style, e.DurationMin, e.Note, e.InputKind, nullableRaw(e.AIRaw), e.ID)
+		    duration_min=$6, hr_zones=$7, note=$8, input_kind=$9, ai_raw=$10, updated_at=NOW()
+		WHERE id=$11`,
+		e.Day, e.Type, e.Activity, e.Location, e.Style, e.DurationMin, nullableZones(e.HRZones), e.Note, e.InputKind, nullableRaw(e.AIRaw), e.ID)
 	if err != nil {
 		return fmt.Errorf("update exercise session: %w", err)
 	}
@@ -552,7 +565,7 @@ func (d *DB) ListAllExercise(ctx context.Context) ([]food.ExerciseSession, error
 func (d *DB) queryExercise(ctx context.Context, where string, args []any) ([]food.ExerciseSession, error) {
 	rows, err := d.pool.Query(ctx, fmt.Sprintf(`
 		SELECT id, day, performed_at, type, activity, location, style, duration_min,
-		       note, input_kind, ai_raw, created_at, updated_at
+		       hr_zones, note, input_kind, ai_raw, created_at, updated_at
 		FROM exercise_sessions
 		WHERE %s
 		ORDER BY day, performed_at`, where), args...)
@@ -565,14 +578,19 @@ func (d *DB) queryExercise(ctx context.Context, where string, args []any) ([]foo
 	for rows.Next() {
 		var e food.ExerciseSession
 		var day time.Time
-		var aiRaw []byte
+		var aiRaw, zones []byte
 		if err := rows.Scan(&e.ID, &day, &e.PerformedAt, &e.Type, &e.Activity, &e.Location, &e.Style, &e.DurationMin,
-			&e.Note, &e.InputKind, &aiRaw, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			&zones, &e.Note, &e.InputKind, &aiRaw, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan exercise session: %w", err)
 		}
 		e.Day = day.Format("2006-01-02")
 		if aiRaw != nil {
 			e.AIRaw = json.RawMessage(aiRaw)
+		}
+		if len(zones) > 0 {
+			if err := json.Unmarshal(zones, &e.HRZones); err != nil {
+				return nil, fmt.Errorf("decode hr_zones: %w", err)
+			}
 		}
 		sessions = append(sessions, e)
 	}

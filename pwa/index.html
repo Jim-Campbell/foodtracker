@@ -132,6 +132,18 @@ input[type=text], input[type=number], input[type=date] {
 .tcount.met { color: var(--green); }
 .qlSub { margin-bottom: 10px; }
 input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; }
+textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; font-family: inherit; resize: vertical; line-height: 1.35; }
+/* minutes stepper: −/editable field/+ pill, reuses .qty from the portion control */
+.qty.mins { margin: 4px 0 2px; }
+.qty input.qtyIn { width: 46px; text-align: center; border: none; background: transparent; color: var(--text); font-size: .9rem; font-weight: 600; -moz-appearance: textfield; }
+.qty input.qtyIn::-webkit-outer-spin-button, .qty input.qtyIn::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qty .unit { font-size: .72rem; color: var(--muted); padding-right: 8px; }
+/* HR-zone panel (cardio) */
+.zbtn { width: 100%; text-align: left; margin-top: 4px; display: flex; gap: 8px; align-items: baseline; }
+.zones { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.zrow { display: flex; align-items: center; gap: 8px; }
+.zrow .zlab { width: 26px; font-weight: 600; font-size: .82rem; color: var(--s-cardio); }
+.zrow input.zin { flex: 1; max-width: 90px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: .85rem; }
 /* item editor */
 .itemlist { margin-bottom: 6px; }
 .itemrow { border-bottom: 1px solid var(--line); padding: 10px 0; }
@@ -564,11 +576,9 @@ const EX_TYPES = [
 const EX_FIELDS = {
   cardio: { label: 'Cardio', chips: [
     { key: 'activity', label: 'Activity', options: ['Run', 'Bike', 'Hike', 'Swim', 'Row', 'Other'], default: 'Run' },
-    { key: 'duration_min', label: 'Minutes', options: [20, 30, 45, 60, 90], default: 30, numeric: true },
+    { key: 'duration_min', label: 'Minutes', kind: 'stepper', default: 45, step: 5, min: 5, numeric: true },
   ] },
-  strength: { label: 'Strength', chips: [
-    { key: 'location', label: 'Where', options: ['Crunch', 'Home', '24 Hour', 'Rec Center'], default: 'Crunch' },
-  ] },
+  strength: { label: 'Strength', chips: [] }, // just did-it + note; location captured in the note
   yoga: { label: 'Yoga', chips: [
     { key: 'location', label: 'Where', options: ['Studio', 'Home'], default: 'Studio' },
     { key: 'style', label: 'Style', options: ['Vinyasa', 'Hot', 'Other'], default: 'Vinyasa' },
@@ -577,9 +587,7 @@ const EX_FIELDS = {
   meditation: { label: 'Meditation', chips: [
     { key: 'duration_min', label: 'Minutes', options: [5, 10, 15, 20, 30], default: 10, numeric: true },
   ] },
-  pt: { label: 'PT', chips: [
-    { key: 'duration_min', label: 'Minutes', options: [10, 15, 20, 30, 45], default: 15, numeric: true },
-  ] },
+  pt: { label: 'PT', chips: [] }, // binary did-it/didn't; the note carries any detail
 };
 async function loadExercise() {
   const end = today();
@@ -679,24 +687,76 @@ function quickLogSheet(type, editSession) {
     if (!f.numeric && v && !f.options.includes(v)) { vals[f.key] = 'Other'; vals[f.key + '_text'] = v; }
     else vals[f.key] = v ?? f.default;
   });
-  QUICKLOG = { type, vals, editId: editSession ? editSession.id : null };
+  vals.note = editSession ? (editSession.note || '') : '';
+  vals.hr_zones = editSession && editSession.hr_zones ? { ...editSession.hr_zones } : {};
+  QUICKLOG = { type, vals, editId: editSession ? editSession.id : null, zonesOpen: !!(editSession && editSession.hr_zones) };
   renderQuickLog();
 }
 function setQuickLogVal(key, val) { QUICKLOG.vals[key] = val; renderQuickLog(); }
+// Minute stepper (−/editable field/+), shared by the tap and NL-confirm cardio
+// sheets. Handler expressions are passed in so each sheet wires its own state.
+function minStepperHTML(val, min, step, decExpr, incExpr, inputExpr) {
+  return `<div class="qty mins">
+    <button type="button" onclick="${decExpr}" ${val <= min ? 'disabled' : ''} title="Less">−</button>
+    <input type="number" class="qtyIn" value="${val}" min="${min}" step="${step}" inputmode="numeric" oninput="${inputExpr}">
+    <span class="unit">min</span>
+    <button type="button" onclick="${incExpr}" title="More">+</button>
+  </div>`;
+}
+// HR-zone panel: collapsed to a button showing a summary, expands to five
+// minute inputs (Z1–Z5). Independent of duration; empty zones are dropped.
+function zonesSectionHTML(zones, open, toggleExpr, setExprFor) {
+  const filled = [1, 2, 3, 4, 5].filter(n => zones[n] > 0);
+  const summary = filled.length ? filled.map(n => `Z${n} ${zones[n]}`).join(' · ') : 'none';
+  const btn = `<button type="button" class="btn ghost zbtn" onclick="${toggleExpr}">${open ? '▾' : '▸'} HR zones <span class="muted sm">${summary}</span></button>`;
+  if (!open) return `<label class="f">Heart-rate zones</label>${btn}`;
+  const inputs = [1, 2, 3, 4, 5].map(n =>
+    `<div class="zrow"><span class="zlab">Z${n}</span><input type="number" class="zin" min="0" step="1" inputmode="numeric" placeholder="0" value="${zones[n] || ''}" oninput="${setExprFor(n)}"><span class="unit">min</span></div>`
+  ).join('');
+  return `<label class="f">Heart-rate zones</label>${btn}<div class="zones">${inputs}</div>`;
+}
+function stepQuickLogNum(key, delta, min) {
+  QUICKLOG.vals[key] = Math.max(min, (parseInt(QUICKLOG.vals[key], 10) || 0) + delta);
+  renderQuickLog();
+}
+function toggleZones() { QUICKLOG.zonesOpen = !QUICKLOG.zonesOpen; renderQuickLog(); }
+function setZoneMin(n, v) {
+  const z = QUICKLOG.vals.hr_zones;
+  const m = parseInt(v, 10);
+  if (!m || m <= 0) delete z[n]; else z[n] = m;
+}
+// Keep only positive integer zone minutes; null when empty so it stores as SQL NULL.
+function cleanZones(zones) {
+  const out = {};
+  for (const n of [1, 2, 3, 4, 5]) { const m = parseInt(zones && zones[n], 10); if (m > 0) out[n] = m; }
+  return Object.keys(out).length ? out : null;
+}
 function renderQuickLog() {
   const { type, vals, editId } = QUICKLOG;
   const cfg = EX_FIELDS[type];
   const existingToday = (S.exercise?.sessions || []).filter(s => s.type === type && s.day === S.day && s.id !== editId);
   const fieldsHTML = cfg.chips.map(f => {
+    if (f.kind === 'stepper') {
+      const v = vals[f.key] ?? f.default;
+      return `<label class="f">${f.label}</label>${minStepperHTML(v, f.min, f.step,
+        `stepQuickLogNum('${f.key}',${-f.step},${f.min})`,
+        `stepQuickLogNum('${f.key}',${f.step},${f.min})`,
+        `setQuickLogValQuiet('${f.key}',parseInt(this.value,10)||0)`)}`;
+    }
     const isOther = !f.numeric && vals[f.key] === 'Other';
     const chips = f.options.map(o => `<button class="${vals[f.key] === o ? 'on' : ''}" onclick="setQuickLogVal('${f.key}', ${typeof o === 'number' ? o : `'${esc(o)}'`})">${o}</button>`).join('');
     const custom = f.numeric ? `<input type="number" class="qlCustom" placeholder="Custom minutes" value="${vals[f.key] && !f.options.includes(vals[f.key]) ? vals[f.key] : ''}" oninput="setQuickLogValQuiet('${f.key}', parseInt(this.value,10)||0)">` : '';
     const other = isOther ? `<input type="text" class="qlCustom" placeholder="Describe" value="${esc(vals[f.key + '_text'] || '')}" oninput="QUICKLOG.vals['${f.key}_text']=this.value">` : '';
     return `<label class="f">${f.label}</label><div class="chips">${chips}</div>${custom}${other}`;
   }).join('');
+  const zonesHTML = type === 'cardio'
+    ? zonesSectionHTML(vals.hr_zones, QUICKLOG.zonesOpen, 'toggleZones()', n => `setZoneMin(${n},this.value)`) : '';
   openDialog(`<h2>Log ${cfg.label}</h2>
     ${existingToday.length ? `<div class="muted sm qlSub">Adds another session — ${existingToday.length} already logged today</div>` : ''}
     ${fieldsHTML}
+    ${zonesHTML}
+    <label class="f">Notes</label>
+    <textarea class="qlNote" placeholder="Details, e.g. hiked to Woodland Lake with Michael" oninput="QUICKLOG.vals.note=this.value">${esc(vals.note || '')}</textarea>
     <div class="dlg-actions">
       ${editId ? `<button class="btn danger" onclick="deleteQuickLog()">Delete</button>` : ''}
       <button class="btn ghost" onclick="closeDialog()">Cancel</button>
@@ -709,13 +769,14 @@ function setQuickLogValQuiet(key, val) { QUICKLOG.vals[key] = val; }
 async function saveQuickLog() {
   const { type, vals, editId } = QUICKLOG;
   const cfg = EX_FIELDS[type];
-  const body = { day: S.day, type, note: '', input_kind: 'tap' };
+  const body = { day: S.day, type, note: (vals.note || '').trim(), input_kind: 'tap' };
   cfg.chips.forEach(f => {
     let v = vals[f.key];
     if (!f.numeric && v === 'Other' && vals[f.key + '_text']) v = vals[f.key + '_text'].trim();
     if (f.numeric) body.duration_min = v || null;
     else body[f.key] = v;
   });
+  if (type === 'cardio') body.hr_zones = cleanZones(vals.hr_zones);
   try {
     if (editId) await api('/exercise/' + editId, { method: 'PUT', body });
     else await api('/exercise', { method: 'POST', body });
@@ -887,15 +948,28 @@ function sessionToVals(s) {
     if (!f.numeric && v && !f.options.includes(v)) { vals[f.key] = 'Other'; vals[f.key + '_text'] = v; }
     else vals[f.key] = v ?? f.default;
   });
+  vals.note = s.note || '';
+  vals.hr_zones = s.hr_zones ? { ...s.hr_zones } : {};
   return vals;
 }
 function openExerciseConfirm(result, meta) {
   EXCONFIRM = {
     input_kind: meta.input_kind || 'text',
     notes: result.notes || '',
-    sessions: (result.exercise || []).map(s => ({ type: s.type, vals: sessionToVals(s) })),
+    sessions: (result.exercise || []).map(s => ({ type: s.type, vals: sessionToVals(s), zonesOpen: !!s.hr_zones })),
   };
   renderExerciseConfirm();
+}
+function stepExerciseNum(i, key, delta, min) {
+  const vals = EXCONFIRM.sessions[i].vals;
+  vals[key] = Math.max(min, (parseInt(vals[key], 10) || 0) + delta);
+  renderExerciseConfirm();
+}
+function toggleZonesConfirm(i) { EXCONFIRM.sessions[i].zonesOpen = !EXCONFIRM.sessions[i].zonesOpen; renderExerciseConfirm(); }
+function setZoneMinConfirm(i, n, v) {
+  const z = EXCONFIRM.sessions[i].vals.hr_zones;
+  const m = parseInt(v, 10);
+  if (!m || m <= 0) delete z[n]; else z[n] = m;
 }
 function renderExerciseConfirm() {
   if (!EXCONFIRM.sessions.length) {
@@ -907,18 +981,30 @@ function renderExerciseConfirm() {
     const cfg = EX_FIELDS[sess.type];
     const vals = sess.vals;
     const fieldsHTML = cfg.chips.map(f => {
+      if (f.kind === 'stepper') {
+        const v = vals[f.key] ?? f.default;
+        return `<label class="f">${f.label}</label>${minStepperHTML(v, f.min, f.step,
+          `stepExerciseNum(${i},'${f.key}',${-f.step},${f.min})`,
+          `stepExerciseNum(${i},'${f.key}',${f.step},${f.min})`,
+          `setExerciseValQuiet(${i},'${f.key}',parseInt(this.value,10)||0)`)}`;
+      }
       const isOther = !f.numeric && vals[f.key] === 'Other';
       const chips = f.options.map(o => `<button class="${vals[f.key] === o ? 'on' : ''}" onclick="setExerciseVal(${i},'${f.key}', ${typeof o === 'number' ? o : `'${esc(o)}'`})">${o}</button>`).join('');
       const custom = f.numeric ? `<input type="number" class="qlCustom" placeholder="Custom minutes" value="${vals[f.key] && !f.options.includes(vals[f.key]) ? vals[f.key] : ''}" oninput="setExerciseValQuiet(${i},'${f.key}', parseInt(this.value,10)||0)">` : '';
       const other = isOther ? `<input type="text" class="qlCustom" placeholder="Describe" value="${esc(vals[f.key + '_text'] || '')}" oninput="EXCONFIRM.sessions[${i}].vals['${f.key}_text']=this.value">` : '';
       return `<label class="f">${f.label}</label><div class="chips">${chips}</div>${custom}${other}`;
     }).join('');
+    const zonesHTML = sess.type === 'cardio'
+      ? zonesSectionHTML(vals.hr_zones, sess.zonesOpen, `toggleZonesConfirm(${i})`, n => `setZoneMinConfirm(${i},${n},this.value)`) : '';
     return `<div class="card" style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <h3 style="margin:0">${cfg.label}</h3>
         ${EXCONFIRM.sessions.length > 1 ? `<button class="lk" onclick="removeExerciseSession(${i})" title="Remove">✕</button>` : ''}
       </div>
       ${fieldsHTML}
+      ${zonesHTML}
+      <label class="f">Notes</label>
+      <textarea class="qlNote" placeholder="Details, e.g. hiked to Woodland Lake with Michael" oninput="EXCONFIRM.sessions[${i}].vals.note=this.value">${esc(vals.note || '')}</textarea>
     </div>`;
   }).join('');
   openDialog(`<h2>Log exercise</h2>
@@ -937,13 +1023,14 @@ async function saveExerciseConfirm() {
   try {
     for (const sess of sessions) {
       const cfg = EX_FIELDS[sess.type];
-      const body = { day: S.day, type: sess.type, note: '', input_kind };
+      const body = { day: S.day, type: sess.type, note: (sess.vals.note || '').trim(), input_kind };
       cfg.chips.forEach(f => {
         let v = sess.vals[f.key];
         if (!f.numeric && v === 'Other' && sess.vals[f.key + '_text']) v = sess.vals[f.key + '_text'].trim();
         if (f.numeric) body.duration_min = v || null;
         else body[f.key] = v;
       });
+      if (sess.type === 'cardio') body.hr_zones = cleanZones(sess.vals.hr_zones);
       await api('/exercise', { method: 'POST', body });
     }
     closeDialog(); toast(sessions.length > 1 ? `Logged ${sessions.length} sessions` : 'Logged');

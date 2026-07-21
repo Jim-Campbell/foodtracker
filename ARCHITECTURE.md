@@ -377,9 +377,10 @@ CREATE TABLE exercise_sessions (
     performed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     type          TEXT NOT NULL CHECK (type IN ('cardio','strength','yoga','meditation','pt')),  -- 'pt' added migration 006
     activity      TEXT,                        -- cardio: Run/Bike/Hike/Swim/Row/Other
-    location      TEXT,                        -- strength + yoga
+    location      TEXT,                        -- yoga (strength captures location in note)
     style         TEXT,                        -- yoga: Vinyasa/Hot/Other
-    duration_min  INT,                         -- cardio/yoga/meditation; NULL for strength
+    duration_min  INT,                         -- cardio/yoga/meditation; NULL for strength + pt
+    hr_zones      JSONB,                       -- cardio only: {"1":min,..,"5":min}, migration 008
     note          TEXT NOT NULL DEFAULT '',
     input_kind    TEXT NOT NULL DEFAULT 'tap'
                   CHECK (input_kind IN ('tap','text','voice','import')),
@@ -393,12 +394,21 @@ CREATE INDEX exercise_sessions_day_idx ON exercise_sessions(day);
 `activity`/`location`/`style` are free-text (not DB enums) so "Other" and
 future values need no migration; the **service** validates the field the type
 requires: cardio needs `activity` + `duration_min > 0`; yoga needs `location`
-+ `style` + `duration_min > 0`; meditation and pt need `duration_min > 0`
-(pt has no activity/location/style, exactly like meditation); strength
-needs `location` and must **not** have `duration_min` set (no duration field
-for it yet). `duration_min` is integer minutes — no floats, same as the food
-domain. **Multiple sessions per day per type are normal** (yoga twice, a hike
++ `style` + `duration_min > 0`; meditation needs `duration_min > 0`; strength
+and pt carry no required fields beyond `type` (their `note` holds any detail,
+e.g. gym location) and must **not** have `duration_min` set.
+`duration_min` is integer minutes — no floats, same as the food domain. **Multiple sessions per day per type are normal** (yoga twice, a hike
 after a swim) — saves always append, never upsert/dedupe by (day, type).
+
+`hr_zones` (migration 008) is **cardio-only**, optional time-in-heart-rate-zone
+as a JSONB map of zone `"1".."5"` → integer minutes, e.g. `{"1":5,"3":15}`.
+It is **independent of `duration_min`** (need not sum to it), integer minutes
+(no floats), and empty zones are dropped so an unused panel stores SQL NULL.
+The service rejects `hr_zones` on non-cardio types and out-of-range keys. The
+shape is Garmin-import-ready: a future import (`input_kind='import'`) maps its
+five zone times straight onto this column. Entered in the PWA via a collapsible
+panel on the cardio tap/NL-confirm sheets; the `note` free-text field shows on
+every exercise type's sheet. Cardio minutes use a single stepper (default 45).
 
 `settings` gained four weekly-target columns, all **Monday–Sunday weeks**:
 `cardio_weekly_target` (default 3), `strength_weekly_target` (default 2),
@@ -409,7 +419,7 @@ days-per-week target, not a session count). Migration 006 (phase E3) added
 API — same bearer auth, JSON in/out as the rest of `/api`:
 
 ```
-POST   /api/exercise            {day,type,activity,location,style,duration_min,note,input_kind} → 201 ExerciseSession
+POST   /api/exercise            {day,type,activity,location,style,duration_min,hr_zones,note,input_kind} → 201 ExerciseSession
 GET    /api/exercise?start=&end=                                → [ExerciseSession]  (day range, inclusive; both required)
 GET    /api/exercise/{id}                                       → ExerciseSession
 PUT    /api/exercise/{id}       same body shape as POST         → ExerciseSession

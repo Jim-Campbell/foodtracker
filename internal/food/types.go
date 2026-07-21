@@ -163,19 +163,23 @@ type Settings struct {
 // sessions per day per type are normal (yoga twice, a hike after a swim);
 // saves always append, never upsert.
 type ExerciseSession struct {
-	ID          int64           `json:"id"`
-	Day         string          `json:"day"` // YYYY-MM-DD
-	PerformedAt time.Time       `json:"performed_at"`
-	Type        string          `json:"type"`
-	Activity    *string         `json:"activity,omitempty"`
-	Location    *string         `json:"location,omitempty"`
-	Style       *string         `json:"style,omitempty"`
-	DurationMin *int            `json:"duration_min,omitempty"`
-	Note        string          `json:"note"`
-	InputKind   string          `json:"input_kind"`
-	AIRaw       json.RawMessage `json:"ai_raw,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID          int64     `json:"id"`
+	Day         string    `json:"day"` // YYYY-MM-DD
+	PerformedAt time.Time `json:"performed_at"`
+	Type        string    `json:"type"`
+	Activity    *string   `json:"activity,omitempty"`
+	Location    *string   `json:"location,omitempty"`
+	Style       *string   `json:"style,omitempty"`
+	DurationMin *int      `json:"duration_min,omitempty"`
+	// HRZones maps heart-rate zone ("1".."5") to integer minutes spent there.
+	// Cardio only, optional, independent of DurationMin. Nil/empty when unused.
+	// Garmin-import-ready: a future import populates this same shape.
+	HRZones   map[string]int  `json:"hr_zones,omitempty"`
+	Note      string          `json:"note"`
+	InputKind string          `json:"input_kind"`
+	AIRaw     json.RawMessage `json:"ai_raw,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // DaySummary is the as-eaten totals and quality score for one day, plus the

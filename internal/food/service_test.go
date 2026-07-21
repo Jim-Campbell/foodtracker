@@ -171,7 +171,7 @@ func TestServiceCreateExerciseValidSessionsPass(t *testing.T) {
 		t.Fatalf("meditation CreateExercise failed: %v", err)
 	}
 
-	pt := &ExerciseSession{Day: "2026-07-07", Type: ExercisePT, DurationMin: intPtr(15)}
+	pt := &ExerciseSession{Day: "2026-07-07", Type: ExercisePT}
 	if err := svc.CreateExercise(ctx, pt); err != nil {
 		t.Fatalf("pt CreateExercise failed: %v", err)
 	}
@@ -189,9 +189,34 @@ func TestServiceCreateExerciseRejectsMissingFields(t *testing.T) {
 		{"yoga missing style", &ExerciseSession{Day: "2026-07-07", Type: ExerciseYoga, Location: strPtr("Home"), DurationMin: intPtr(30)}},
 		{"strength with duration", &ExerciseSession{Day: "2026-07-07", Type: ExerciseStrength, Location: strPtr("Home"), DurationMin: intPtr(45)}},
 		{"meditation zero duration", &ExerciseSession{Day: "2026-07-07", Type: ExerciseMeditation, DurationMin: intPtr(0)}},
-		{"pt zero duration", &ExerciseSession{Day: "2026-07-07", Type: ExercisePT, DurationMin: intPtr(0)}},
+		{"pt with duration", &ExerciseSession{Day: "2026-07-07", Type: ExercisePT, DurationMin: intPtr(20)}},
 	}
 	for _, c := range cases {
+		if err := svc.CreateExercise(ctx, c.e); err == nil {
+			t.Errorf("%s: expected an error, got nil", c.name)
+		}
+	}
+}
+
+func TestServiceCreateExerciseHRZones(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	ok := &ExerciseSession{Day: "2026-07-07", Type: ExerciseCardio, Activity: strPtr("Run"),
+		DurationMin: intPtr(45), HRZones: map[string]int{"1": 5, "2": 20, "3": 15, "5": 5}}
+	if err := svc.CreateExercise(ctx, ok); err != nil {
+		t.Fatalf("cardio with hr_zones should pass: %v", err)
+	}
+
+	bad := []struct {
+		name string
+		e    *ExerciseSession
+	}{
+		{"zones on non-cardio", &ExerciseSession{Day: "2026-07-07", Type: ExerciseMeditation, DurationMin: intPtr(10), HRZones: map[string]int{"1": 5}}},
+		{"invalid zone key", &ExerciseSession{Day: "2026-07-07", Type: ExerciseCardio, Activity: strPtr("Run"), DurationMin: intPtr(45), HRZones: map[string]int{"6": 5}}},
+		{"negative minutes", &ExerciseSession{Day: "2026-07-07", Type: ExerciseCardio, Activity: strPtr("Run"), DurationMin: intPtr(45), HRZones: map[string]int{"2": -3}}},
+	}
+	for _, c := range bad {
 		if err := svc.CreateExercise(ctx, c.e); err == nil {
 			t.Errorf("%s: expected an error, got nil", c.name)
 		}

@@ -103,9 +103,9 @@ var logExerciseSchema = json.RawMessage(`{
             "description": "cardio: running/biking/hiking/swimming/rowing. strength: lifting/gym. yoga: any yoga practice. meditation: meditation/breathwork. pt: physical therapy/rehab exercises/stretches."
           },
           "activity": { "type": ["string", "null"], "description": "Cardio only. Map casual phrasing to the known vocab when obvious: Run, Bike, Hike, Swim, Row, Other." },
-          "location": { "type": ["string", "null"], "description": "Strength/yoga only: where it happened, e.g. a gym name, 'Studio', 'Home'." },
+          "location": { "type": ["string", "null"], "description": "Yoga only: where it happened, e.g. 'Studio' or 'Home'. Strength captures any location in note instead." },
           "style": { "type": ["string", "null"], "description": "Yoga only. Map to the known vocab when obvious: Vinyasa, Hot, Other." },
-          "duration_min": { "type": ["integer", "null"], "description": "Integer minutes, from whatever the input stated. Required for cardio/yoga/meditation/pt; must be null for strength (no duration field for it yet). Leave null if truly unstated -- don't guess." },
+          "duration_min": { "type": ["integer", "null"], "description": "Integer minutes, from whatever the input stated. Required for cardio/yoga/meditation; must be null for strength and pt (pt is a binary did-it/didn't habit -- put any minutes or detail in note instead). Leave null if truly unstated -- don't guess." },
           "note": { "type": "string", "description": "Optional free-text note, empty string if none." }
         },
         "required": ["type"]
