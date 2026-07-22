@@ -116,20 +116,24 @@ input[type=text], input[type=number], input[type=date] {
 .macrorow svg { flex-shrink: 0; }
 .leg { font-size: .8rem; line-height: 1.5; display: flex; align-items: center; gap: 6px; }
 .legdot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-/* training card */
-.trow { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
-.trow:last-child { border-bottom: none; }
-.trow-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--chip); display: flex; align-items: center; justify-content: center; font-size: 1.05rem; flex-shrink: 0; }
-.trow-icon.met { background: var(--green-tint); }
-.trow .grow { flex: 1; min-width: 0; }
-.trow .m { font-weight: 500; }
-.trow .s { font-size: .78rem; color: var(--muted); }
-.tdots { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; max-width: 90px; justify-content: flex-end; }
-.tdot { width: 9px; height: 9px; border-radius: 50%; background: var(--chip); border: 1.5px solid var(--line); flex-shrink: 0; }
-.tdot.on { background: var(--green); border-color: var(--green); }
-.tdot.today { background: none; border: 1.5px dashed var(--primary); }
-.tcount { font-size: .82rem; font-weight: 600; flex-shrink: 0; min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
-.tcount.met { color: var(--green); }
+/* training card — one row per activity: icon, 7 day-boxes (Mon–Sun), goal circles */
+.trainweek { display: grid; grid-template-columns: 32px repeat(7, 26px) auto; column-gap: 3px; row-gap: 13px; align-items: center; position: relative; margin-top: 4px; justify-content: start; }
+.trainweek > :not(.ti-lane) { position: relative; z-index: 1; }
+/* pale grey vertical lane behind today's column (a touch wider than the boxes, no
+   border). Geometry is set by positionTodayLane() after render — grid can't be
+   trusted to size an absolutely-positioned item to a single column track. */
+.ti-lane { position: absolute; background: var(--chip); border-radius: 8px; z-index: 0; }
+.ti-icon { width: 32px; height: 32px; border-radius: 9px; background: var(--chip); display: flex; align-items: center; justify-content: center; font-size: 1.02rem; cursor: pointer; }
+.ti-icon.met { background: var(--green-tint); }
+.ti-hdr { font-size: 11px; color: var(--muted); text-align: center; }
+.ti-hdr.tdy { color: var(--text); font-weight: 600; }
+.ti-box { width: 26px; height: 26px; border: 1.5px solid var(--line); border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.ti-box svg { display: block; }
+.ti-dot { width: 10px; height: 10px; border-radius: 50%; }
+.ti-circles { display: flex; gap: 2px; align-items: center; margin-left: 7px; }
+.ti-circle { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid currentColor; }
+.ti-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: .72rem; color: var(--muted); }
+.ti-legend .lgi { display: inline-flex; align-items: center; gap: 4px; }
 .qlSub { margin-bottom: 10px; }
 input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; }
 textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; font-family: inherit; resize: vertical; line-height: 1.35; }
@@ -377,7 +381,20 @@ function render() {
   const m = $('#main');
   m.classList.toggle('wide', S.view === 'trends' && S.trendsTab === 'training');
   ({ today: renderToday, trends: renderTrends, settings: renderSettings }[S.view] || renderToday)(m);
+  positionTodayLane(); // sync — getBoundingClientRect forces the layout it needs
 }
+// Pin the grey today-lane behind today's day-column, a touch wider than the box.
+function positionTodayLane() {
+  const tw = $('.trainweek'); if (!tw) return;
+  const lane = tw.querySelector('.ti-lane'); if (!lane) return;
+  const box = tw.querySelectorAll('.ti-box')[Number(lane.dataset.day)]; if (!box) return;
+  const tr = tw.getBoundingClientRect(), br = box.getBoundingClientRect();
+  lane.style.left = (br.left - tr.left - 4) + 'px';
+  lane.style.width = (br.width + 8) + 'px';
+  lane.style.top = '-3px';
+  lane.style.height = (tr.height + 6) + 'px';
+}
+window.addEventListener('resize', positionTodayLane);
 
 // ==================== TODAY ====================
 function changeDay(delta) {
@@ -568,14 +585,18 @@ function renderToday(m) {
 }
 
 // ==================== TRAINING ====================
-const EX_TYPES = [
-  { key: 'cardio', label: 'Cardio', icon: '🏃', targetKey: 'cardio_weekly_target' },
-  { key: 'strength', label: 'Strength', icon: '🏋️', targetKey: 'strength_weekly_target' },
-  { key: 'yoga', label: 'Yoga', icon: '🧘', targetKey: 'yoga_weekly_target' },
+// One row per activity in the weekly training card. color = per-activity CSS var
+// used for the day-dots and the goal circles; targetKey = weekly goal in settings.
+const TRAIN_ROWS = [
+  { key: 'cardio', label: 'Cardio', icon: '🏃', color: '--s-cardio', targetKey: 'cardio_weekly_target' },
+  { key: 'strength', label: 'Strength', icon: '🏋️', color: '--s-strength', targetKey: 'strength_weekly_target' },
+  { key: 'yoga', label: 'Yoga', icon: '🧘', color: '--s-yoga', targetKey: 'yoga_weekly_target' },
+  { key: 'meditation', label: 'Meditation', icon: '🪷', color: '--s-med', targetKey: 'meditation_weekly_days' },
+  { key: 'pt', label: 'PT', icon: '🙇', color: '--s-pt', targetKey: 'pt_weekly_days' },
 ];
 const EX_FIELDS = {
   cardio: { label: 'Cardio', chips: [
-    { key: 'activity', label: 'Activity', options: ['Run', 'Bike', 'Hike', 'Swim', 'Row', 'Other'], default: 'Run' },
+    { key: 'activity', label: 'Activity', options: ['Run', 'Ride', 'Spin', 'Hike', 'Swim', 'Row', 'Other'], default: 'Run' },
     { key: 'duration_min', label: 'Minutes', kind: 'stepper', default: 45, step: 5, min: 5, numeric: true },
   ] },
   strength: { label: 'Strength', chips: [] }, // just did-it + note; location captured in the note
@@ -600,78 +621,59 @@ function typeSessionsInWeek(sessions, type, weekStartStr) {
   const end = addDays(weekStartStr, 6);
   return sessions.filter(s => s.type === type && s.day >= weekStartStr && s.day <= end);
 }
-// One dot per session this week, in chronological order, zipped so filled
-// dots link back to the session that earned them (tap to edit). A dashed
-// "today" dot fills the next unmet slot when nothing's logged for the type
-// yet today; sessions beyond the target render as extra filled dots.
-function targetDotsHTML(type, weekSessions, target, todayCount) {
-  const sorted = [...weekSessions].sort((a, b) => a.performed_at.localeCompare(b.performed_at));
-  const count = sorted.length;
-  const filled = Math.min(count, target);
-  let html = '', si = 0;
-  const dot = (cls, session) => {
-    let click = session ? `editExerciseSession(${session.id})` : (cls === 'today' ? `quickLogSheet('${type}')` : '');
-    return `<span class="tdot${cls ? ' ' + cls : ''}" ${click ? `onclick="event.stopPropagation();${click}"` : ''}></span>`;
-  };
-  for (let i = 0; i < filled; i++) { html += dot('on', sorted[si]); si++; }
-  if (filled < target) {
-    html += dot(todayCount === 0 ? 'today' : '', null);
-    for (let i = filled + 1; i < target; i++) html += dot('', null);
-  }
-  for (; si < count; si++) html += dot('on', sorted[si]);
-  return html;
+// A stationary/spin bike — no good emoji exists, so it's drawn inline. Outdoor
+// biking (Ride) uses 🚴; the two must be visually distinct at a glance.
+function spinBikeSVG(px = 18) {
+  return `<svg width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:var(--s-cardio)"><circle cx="6.5" cy="15.5" r="3.4"/><circle cx="6.5" cy="15.5" r="0.8" fill="currentColor" stroke="none"/><path d="M6.5 15.5 L11 8 L16 8"/><path d="M16 6.3 L16 10"/><path d="M11 8 L13.5 14"/><path d="M9.5 6 L13 6"/><path d="M4 20.2 L18 20.2 M13.5 14 L13.5 20.2"/></svg>`;
 }
-function exerciseSubtitle(sessions, type, weekStartStr, todayCount) {
-  if (todayCount >= 1) return todayCount > 1 ? `today ×${todayCount}` : 'today';
-  const typeSessions = sessions.filter(s => s.type === type).sort((a, b) => b.day.localeCompare(a.day));
-  const thisWeek = typeSessions.find(s => s.day >= weekStartStr && s.day < S.day);
-  if (thisWeek) return `last: ${weekdayShort(thisWeek.day)}`;
-  const before = typeSessions.find(s => s.day < weekStartStr);
-  if (before) {
-    const wa = Math.round(daysBetween(weekStart(before.day), weekStartStr) / 7);
-    return `last: ${weekdayShort(before.day)} · ${wa <= 1 ? 'last wk' : wa + ' wks ago'}`;
-  }
-  return 'none yet';
+const CARDIO_EMOJI = { Run: '🏃', Ride: '🚴', Bike: '🚴', Cycle: '🚴', Swim: '🏊', Hike: '🥾', Row: '🚣' };
+// Icon shown inside a cardio day-box, distinguishing the activity that day.
+function cardioIconHTML(activity) {
+  if (activity === 'Spin' || /spin|stationary|peloton|indoor/i.test(activity || '')) return spinBikeSVG(18);
+  const e = CARDIO_EMOJI[activity];
+  if (e) return `<span style="font-size:15px;line-height:1">${e}</span>`;
+  return `<span class="ti-dot" style="background:var(--s-cardio)"></span>`;
+}
+// One activity row: icon tile, 7 day-boxes (dot/icon on days done), goal circles.
+function trainRowHTML(t, days) {
+  const weekSessions = typeSessionsInWeek(S.exercise.sessions, t.key, weekStart(S.day));
+  const byDay = {};
+  weekSessions.forEach(s => (byDay[s.day] = byDay[s.day] || []).push(s));
+  const filledDays = Object.keys(byDay).length;
+  const target = (S.settings && S.settings[t.targetKey]) || 0;
+  const met = target > 0 && filledDays >= target;
+  const boxes = days.map(d => {
+    const ds = byDay[d];
+    if (ds) {
+      const inner = t.key === 'cardio' ? cardioIconHTML(ds[0].activity) : `<span class="ti-dot" style="background:var(${t.color})"></span>`;
+      return `<div class="ti-box" onclick="event.stopPropagation();editExerciseSession(${ds[0].id})">${inner}</div>`;
+    }
+    return `<div class="ti-box" onclick="event.stopPropagation();quickLogSheet('${t.key}')"></div>`;
+  }).join('');
+  const left = Math.max(0, target - filledDays);
+  const circles = left > 0
+    ? `<div class="ti-circles" style="color:var(${t.color})">${'<span class="ti-circle"></span>'.repeat(left)}</div>`
+    : `<div class="ti-circles"></div>`;
+  return `<div class="ti-icon${met ? ' met' : ''}" title="${t.label}" onclick="quickLogSheet('${t.key}')">${t.icon}</div>
+    ${boxes}${circles}`;
 }
 function trainingCardHTML() {
   if (!S.exercise) return `<div class="card"><h3>Training · this week</h3><div class="muted sm">Loading…</div></div>`;
   const ws = weekStart(S.day);
-  const sessions = S.exercise.sessions;
-  const rows = EX_TYPES.map(t => {
-    const weekSessions = typeSessionsInWeek(sessions, t.key, ws);
-    const count = weekSessions.length;
-    const target = (S.settings && S.settings[t.targetKey]) || 0;
-    const todayCount = weekSessions.filter(s => s.day === S.day).length;
-    const met = target > 0 && count >= target;
-    return `<div class="trow" onclick="quickLogSheet('${t.key}')">
-      <div class="trow-icon${met ? ' met' : ''}">${t.icon}</div>
-      <div class="grow"><div class="m">${t.label}</div><div class="s">${exerciseSubtitle(sessions, t.key, ws, todayCount)}</div></div>
-      <div class="tdots">${targetDotsHTML(t.key, weekSessions, target, todayCount)}</div>
-      <div class="tcount${met ? ' met' : ''}">${count}/${target}${met ? ' ✓' : ''}</div>
-    </div>`;
-  }).join('');
   const days = []; for (let i = 0; i < 7; i++) days.push(addDays(ws, i));
-  const habitRow = (type, icon, label, targetKey) => {
-    const byDay = {};
-    sessions.filter(s => s.type === type && days.includes(s.day)).forEach(s => (byDay[s.day] = byDay[s.day] || []).push(s));
-    const target = (S.settings && S.settings[targetKey]) || 0;
-    const done = Object.keys(byDay).length;
-    const met = target > 0 && done >= target;
-    const dots = days.map(d => {
-      if (byDay[d]) return `<span class="tdot on" onclick="event.stopPropagation();editExerciseSession(${byDay[d][0].id})"></span>`;
-      if (d === S.day) return `<span class="tdot today" onclick="event.stopPropagation();quickLogSheet('${type}')"></span>`;
-      return '<span class="tdot"></span>';
-    }).join('');
-    return `<div class="trow" onclick="quickLogSheet('${type}')">
-      <div class="trow-icon${met ? ' met' : ''}">${icon}</div>
-      <div class="grow"><div class="m">${label}</div></div>
-      <div class="tdots">${dots}</div>
-      <div class="tcount${met ? ' met' : ''}">${done}/${target}${met ? ' ✓' : ''}</div>
-    </div>`;
-  };
-  const medRow = habitRow('meditation', '🪷', 'Meditation', 'meditation_weekly_days');
-  const ptRow = habitRow('pt', '🩼', 'PT', 'pt_weekly_days');
-  return `<div class="card"><h3>Training · this week</h3>${rows}${medRow}${ptRow}</div>`;
+  const todayIdx = daysBetween(ws, S.day); // 0..6, Mon-based
+  const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const header = `<div></div>` +
+    letters.map((l, i) => `<div class="ti-hdr${i === todayIdx ? ' tdy' : ''}">${l}</div>`).join('') +
+    `<div class="ti-hdr" style="text-align:left;margin-left:8px">left</div>`;
+  const rows = TRAIN_ROWS.map(t => trainRowHTML(t, days)).join('');
+  const legend = `<div class="ti-legend"><span style="font-weight:500">Cardio</span>` +
+    `<span class="lgi">🏃 Run</span><span class="lgi">🚴 Ride</span>` +
+    `<span class="lgi">${spinBikeSVG(15)} Spin</span>` +
+    `<span class="lgi">🏊 Swim</span><span class="lgi">🥾 Hike</span><span class="lgi">🚣 Row</span></div>`;
+  return `<div class="card"><h3>Training · this week</h3>
+    <div class="trainweek"><div class="ti-lane" data-day="${todayIdx}"></div>${header}${rows}</div>
+    ${legend}</div>`;
 }
 function editExerciseSession(id) {
   const s = (S.exercise?.sessions || []).find(x => x.id === id);
@@ -1546,7 +1548,7 @@ function trainingMinutesChart(weeks, aggs, curWs) {
 function cardioMixCard(sessions) {
   const cardio = sessions.filter(s => s.type === 'cardio');
   if (!cardio.length) return `<div class="card"><h3>Cardio mix</h3><div class="empty">No cardio in this range</div></div>`;
-  const order = ['Run', 'Bike', 'Hike', 'Swim', 'Row'];
+  const order = ['Run', 'Ride', 'Spin', 'Hike', 'Swim', 'Row'];
   const byActivity = {};
   cardio.forEach(s => { const a = s.activity || 'Other'; byActivity[a] = (byActivity[a] || 0) + (s.duration_min || 0); });
   const keys = [...order.filter(k => byActivity[k]), ...Object.keys(byActivity).filter(k => !order.includes(k))];

@@ -376,7 +376,7 @@ CREATE TABLE exercise_sessions (
     day           DATE NOT NULL,               -- user-chosen, independent of performed_at
     performed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     type          TEXT NOT NULL CHECK (type IN ('cardio','strength','yoga','meditation','pt')),  -- 'pt' added migration 006
-    activity      TEXT,                        -- cardio: Run/Bike/Hike/Swim/Row/Other
+    activity      TEXT,                        -- cardio: Run/Ride/Spin/Hike/Swim/Row/Other (Ride=outdoor, Spin=stationary)
     location      TEXT,                        -- yoga (strength captures location in note)
     style         TEXT,                        -- yoga: Vinyasa/Hot/Other
     duration_min  INT,                         -- cardio/yoga/meditation; NULL for strength + pt
@@ -436,17 +436,20 @@ targets (cardio/strength/yoga/meditation/pt) are included in
 
 On Today, under the calorie hero, a **Training · this week** card shows one
 row per practice — this is the whole reminder-to-move, no nudge sentence.
-Cardio/Strength/Yoga rows show an icon, a subtitle (`today`/`today ×N`,
-`last: <Wkday>`, or `last: <Wkday> · last wk`/`· N wks ago` falling back
-across the Mon–Sun week boundary, or `none yet`), a dot per session this
-week up to the weekly target (extra dots beyond target, a dashed dot for
-today when nothing's logged yet), and `n/target` with a ✓/green treatment
-when met. Meditation is a 7-dot Mon–Sun daily row (`daysDone/7`) instead of
-a session count. Tapping a row (or its "today" dashed dot) opens a quick-log
-bottom sheet — chip pickers with sensible defaults, 2–3 taps, no AI call;
-saving always appends (`POST /api/exercise`, `input_kind: 'tap'`, `day` =
-the currently-viewed day), never overwrites. Tapping a filled dot reopens
-that session for edit/delete. The PWA fetches the current week plus an
+Every activity (Cardio, Strength, Yoga, Meditation, PT) is a uniform **7-box
+Mon–Sun row**: an icon tile, seven day-boxes, then goal circles. A box gets a
+dot on any day that activity was logged (binary per day — a second same-day
+session doesn't double up); cardio boxes instead show the specific activity
+icon for that day (Run/Ride/🚴/Spin=inline spin-bike SVG/Swim/Hike/Row) so the
+kind of cardio reads at a glance. Beside the boxes are `max(0, target − daysDone)`
+hollow **circles** — the sessions still left toward the weekly goal — and
+nothing once met (no badge, no check). Today's column sits behind a pale grey
+vertical lane. There is no `n/target` badge and no `last: <Wkday>` subtitle.
+Tapping a row (or an empty box) opens a quick-log bottom sheet — chip pickers
+with sensible defaults, 2–3 taps, no AI call; saving always appends
+(`POST /api/exercise`, `input_kind: 'tap'`, `day` = the currently-viewed day),
+never overwrites. Tapping a filled box reopens that session for edit/delete.
+The PWA fetches the current week plus an
 8-week lookback once per Today load (`GET /api/exercise?start=&end=`) and
 recomputes the card from that cache as the viewed day changes. Settings
 gained a "Weekly training targets" group for the four columns above.
