@@ -10,10 +10,19 @@ func newTestService() *Service {
 	return NewService(newFakeStore(), slog.Default())
 }
 
+// createMeal is a test shim for the pre-refactor CreateMeal: it appends a
+// Meal's foods to its (day, slot) container via the new AddFoods path, so the
+// many existing tests read the same. It mutates m.Items with the applied
+// defaults, just as the old path did.
+func createMeal(svc *Service, ctx context.Context, m *Meal) error {
+	_, err := svc.AddFoods(ctx, m.Day, m.Slot, m.Items)
+	return err
+}
+
 func TestServiceCreateMealRejectsBadDay(t *testing.T) {
 	svc := newTestService()
 	m := &Meal{Day: "not-a-date"}
-	if err := svc.CreateMeal(context.Background(), m); err == nil {
+	if err := createMeal(svc, context.Background(), m); err == nil {
 		t.Error("expected an error for a malformed day, got nil")
 	}
 }
@@ -26,7 +35,7 @@ func TestServiceCreateMealRejectsBadItem(t *testing.T) {
 			{Name: "mystery meat", Tier: "not-a-tier", FractionPct: 100, Source: SourceManual},
 		},
 	}
-	if err := svc.CreateMeal(context.Background(), m); err == nil {
+	if err := createMeal(svc, context.Background(), m); err == nil {
 		t.Error("expected an error for an invalid item tier, got nil")
 	}
 }
@@ -37,11 +46,11 @@ func TestServiceCreateMealDefaultsFractionAndInputKind(t *testing.T) {
 		Day:   "2026-07-07",
 		Items: []MealItem{{Name: "apple", Calories: 95, Tier: TierHardYes}},
 	}
-	if err := svc.CreateMeal(context.Background(), m); err != nil {
-		t.Fatalf("CreateMeal failed: %v", err)
+	if err := createMeal(svc, context.Background(), m); err != nil {
+		t.Fatalf("AddFoods failed: %v", err)
 	}
-	if m.InputKind != InputManual {
-		t.Errorf("InputKind = %q, want %q", m.InputKind, InputManual)
+	if m.Items[0].InputKind != InputManual {
+		t.Errorf("food InputKind = %q, want %q", m.Items[0].InputKind, InputManual)
 	}
 	if m.Items[0].FractionPct != 100 {
 		t.Errorf("FractionPct = %d, want 100", m.Items[0].FractionPct)
@@ -59,7 +68,7 @@ func TestServiceDaySummaryRemaining(t *testing.T) {
 			{Name: "big dinner", Calories: 2000, ProteinMg: 50000, Tier: TierHardYes, FractionPct: 100},
 		},
 	}
-	if err := svc.CreateMeal(ctx, m); err != nil {
+	if err := createMeal(svc, ctx, m); err != nil {
 		t.Fatalf("CreateMeal failed: %v", err)
 	}
 
@@ -89,7 +98,7 @@ func TestServiceUpdateSettingsChangesRemaining(t *testing.T) {
 		Day:   "2026-07-07",
 		Items: []MealItem{{Name: "snack", Calories: 500, Tier: TierNeutral, FractionPct: 100}},
 	}
-	if err := svc.CreateMeal(ctx, m); err != nil {
+	if err := createMeal(svc, ctx, m); err != nil {
 		t.Fatalf("CreateMeal failed: %v", err)
 	}
 
@@ -119,10 +128,10 @@ func TestServiceRangeSummaryOverTarget(t *testing.T) {
 
 	over := &Meal{Day: "2026-07-01", Items: []MealItem{{Name: "feast", Calories: 2500, Tier: TierNeutral, FractionPct: 100}}}
 	under := &Meal{Day: "2026-07-02", Items: []MealItem{{Name: "light day", Calories: 1200, Tier: TierNeutral, FractionPct: 100}}}
-	if err := svc.CreateMeal(ctx, over); err != nil {
+	if err := createMeal(svc, ctx, over); err != nil {
 		t.Fatalf("CreateMeal failed: %v", err)
 	}
-	if err := svc.CreateMeal(ctx, under); err != nil {
+	if err := createMeal(svc, ctx, under); err != nil {
 		t.Fatalf("CreateMeal failed: %v", err)
 	}
 

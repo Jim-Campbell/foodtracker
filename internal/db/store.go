@@ -35,59 +35,75 @@ func nullableZones(z map[string]int) any {
 	return b
 }
 
-// ---- meals ----
+// ---- meals (containers) + foods (items) ----
 
-func (d *DB) CreateMeal(ctx context.Context, m *food.Meal) error {
+// findOrCreateMeal returns the id of the (day, slot) container, creating it if
+// absent. One container per (day, slot) is enforced by a unique index over
+// (day, COALESCE(slot,”)), so unslotted foods share a single bucket per day.
+func findOrCreateMeal(ctx context.Context, tx pgx.Tx, day string, slot *string) (int64, error) {
+	var id int64
+	err := tx.QueryRow(ctx, `
+		INSERT INTO meals (day, slot) VALUES ($1::date, $2)
+		ON CONFLICT (day, COALESCE(slot, '')) DO UPDATE SET updated_at = NOW()
+		RETURNING id`, day, slot).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("find-or-create meal: %w", err)
+	}
+	return id, nil
+}
+
+// AddFoods appends foods to the (day, slot) container (creating it if needed)
+// and returns the whole container. Foods are positioned after any already in
+// the slot, so the flat list stays in add order.
+func (d *DB) AddFoods(ctx context.Context, day string, slot *string, items []food.MealItem) (*food.Meal, error) {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return nil, fmt.Errorf("begin: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	var day time.Time
-	err = tx.QueryRow(ctx, `
-		INSERT INTO meals (day, slot, description, input_kind, photo_key, photo_url, ai_model, ai_raw)
-		VALUES ($1::date,$2,$3,$4,$5,$6,$7,$8)
-		RETURNING id, day, eaten_at, created_at, updated_at`,
-		m.Day, m.Slot, m.Description, m.InputKind, m.PhotoKey, m.PhotoURL, m.AIModel, nullableRaw(m.AIRaw)).
-		Scan(&m.ID, &day, &m.EatenAt, &m.CreatedAt, &m.UpdatedAt)
+	mealID, err := findOrCreateMeal(ctx, tx, day, slot)
 	if err != nil {
-		return fmt.Errorf("insert meal: %w", err)
+		return nil, err
 	}
-	m.Day = day.Format("2006-01-02")
-
-	if err := insertMealItems(ctx, tx, m.ID, m.Items); err != nil {
-		return err
+	var startPos int
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(position), -1) + 1 FROM meal_items WHERE meal_id = $1`, mealID).Scan(&startPos); err != nil {
+		return nil, fmt.Errorf("next position: %w", err)
 	}
-
+	if err := insertMealItems(ctx, tx, mealID, items, startPos); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return nil, fmt.Errorf("commit: %w", err)
 	}
-	return nil
+	return d.GetMeal(ctx, mealID)
 }
 
-func insertMealItems(ctx context.Context, tx pgx.Tx, mealID int64, items []food.MealItem) error {
+func insertMealItems(ctx context.Context, tx pgx.Tx, mealID int64, items []food.MealItem, startPos int) error {
 	for i := range items {
 		it := &items[i]
 		it.MealID = mealID
-		if it.Position == 0 {
-			it.Position = i
+		it.Position = startPos + i
+		if it.InputKind == "" {
+			it.InputKind = food.InputManual
 		}
 		err := tx.QueryRow(ctx, `
 			INSERT INTO meal_items (
 				meal_id, position, name, brand, quantity, grams, fraction_pct,
 				calories, protein_mg, carbs_mg, fat_mg, fiber_mg, sat_fat_mg, sugar_mg, sodium_mg,
 				micros, tier, tier_reason, source, source_ref, confidence,
-				fdc_id, fdc_data_type, resolution_tier, portion_source, tier_source
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
-			RETURNING id`,
+				fdc_id, fdc_data_type, resolution_tier, portion_source, tier_source,
+				input_kind, photo_key, photo_url, ai_model, ai_raw
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+			RETURNING id, eaten_at`,
 			mealID, it.Position, it.Name, it.Brand, it.Quantity, it.Grams, it.FractionPct,
 			it.Calories, it.ProteinMg, it.CarbsMg, it.FatMg, it.FiberMg, it.SatFatMg, it.SugarMg, it.SodiumMg,
 			nullableRaw(it.Micros), it.Tier, it.TierReason, it.Source, it.SourceRef, it.Confidence,
-			it.FDCID, it.FDCDataType, it.ResolutionTier, it.PortionSource, it.TierSource).
-			Scan(&it.ID)
+			it.FDCID, it.FDCDataType, it.ResolutionTier, it.PortionSource, it.TierSource,
+			it.InputKind, it.PhotoKey, it.PhotoURL, it.AIModel, nullableRaw(it.AIRaw)).
+			Scan(&it.ID, &it.EatenAt)
 		if err != nil {
-			return fmt.Errorf("insert meal item %d: %w", i, err)
+			return fmt.Errorf("insert food %d: %w", i, err)
 		}
 	}
 	return nil
@@ -108,13 +124,98 @@ func (d *DB) ListMealsByDay(ctx context.Context, day string) ([]food.Meal, error
 	return d.queryMeals(ctx, "m.day = $1::date", []any{day})
 }
 
+// GetFood returns a single food by id, or nil when absent.
+func (d *DB) GetFood(ctx context.Context, id int64) (*food.MealItem, error) {
+	items, err := d.queryFoods(ctx, "id = $1", []any{id})
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return &items[0], nil
+}
+
+// UpdateFood updates one food and re-parents it to the (day, slot) container it
+// should belong to, creating that container if needed and deleting the old one
+// if the move empties it. This is how editing a food's slot moves it.
+func (d *DB) UpdateFood(ctx context.Context, day string, slot *string, it *food.MealItem) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var oldMealID int64
+	if err := tx.QueryRow(ctx, `SELECT meal_id FROM meal_items WHERE id = $1`, it.ID).Scan(&oldMealID); err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("not found: food")
+		}
+		return fmt.Errorf("load food: %w", err)
+	}
+	targetMealID, err := findOrCreateMeal(ctx, tx, day, slot)
+	if err != nil {
+		return err
+	}
+	if it.InputKind == "" {
+		it.InputKind = food.InputManual
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE meal_items SET
+			meal_id=$2, name=$3, brand=$4, quantity=$5, grams=$6, fraction_pct=$7,
+			calories=$8, protein_mg=$9, carbs_mg=$10, fat_mg=$11, fiber_mg=$12, sat_fat_mg=$13, sugar_mg=$14, sodium_mg=$15,
+			micros=$16, tier=$17, tier_reason=$18, source=$19, source_ref=$20, confidence=$21,
+			fdc_id=$22, fdc_data_type=$23, resolution_tier=$24, portion_source=$25, tier_source=$26, input_kind=$27
+		WHERE id=$1`,
+		it.ID, targetMealID, it.Name, it.Brand, it.Quantity, it.Grams, it.FractionPct,
+		it.Calories, it.ProteinMg, it.CarbsMg, it.FatMg, it.FiberMg, it.SatFatMg, it.SugarMg, it.SodiumMg,
+		nullableRaw(it.Micros), it.Tier, it.TierReason, it.Source, it.SourceRef, it.Confidence,
+		it.FDCID, it.FDCDataType, it.ResolutionTier, it.PortionSource, it.TierSource, it.InputKind)
+	if err != nil {
+		return fmt.Errorf("update food: %w", err)
+	}
+	if oldMealID != targetMealID {
+		if _, err := tx.Exec(ctx, `DELETE FROM meals WHERE id=$1 AND NOT EXISTS (SELECT 1 FROM meal_items WHERE meal_id=$1)`, oldMealID); err != nil {
+			return fmt.Errorf("prune empty meal: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// DeleteFood removes one food, and its container too if that was the last food
+// in the slot.
+func (d *DB) DeleteFood(ctx context.Context, id int64) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var mealID int64
+	if err := tx.QueryRow(ctx, `DELETE FROM meal_items WHERE id = $1 RETURNING meal_id`, id).Scan(&mealID); err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("not found: food")
+		}
+		return fmt.Errorf("delete food: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM meals WHERE id=$1 AND NOT EXISTS (SELECT 1 FROM meal_items WHERE meal_id=$1)`, mealID); err != nil {
+		return fmt.Errorf("prune empty meal: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
 func (d *DB) queryMeals(ctx context.Context, where string, args []any) ([]food.Meal, error) {
 	rows, err := d.pool.Query(ctx, fmt.Sprintf(`
-		SELECT m.id, m.day, m.eaten_at, m.slot, m.description, m.input_kind,
-		       m.photo_key, m.photo_url, m.ai_model, m.ai_raw, m.created_at, m.updated_at
+		SELECT m.id, m.day, m.slot, m.created_at, m.updated_at
 		FROM meals m
 		WHERE %s
-		ORDER BY m.day, m.eaten_at`, where), args...)
+		ORDER BY m.day, m.slot`, where), args...)
 	if err != nil {
 		return nil, fmt.Errorf("query meals: %w", err)
 	}
@@ -125,15 +226,10 @@ func (d *DB) queryMeals(ctx context.Context, where string, args []any) ([]food.M
 	for rows.Next() {
 		var m food.Meal
 		var day time.Time
-		var aiRaw []byte
-		if err := rows.Scan(&m.ID, &day, &m.EatenAt, &m.Slot, &m.Description, &m.InputKind,
-			&m.PhotoKey, &m.PhotoURL, &m.AIModel, &aiRaw, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &day, &m.Slot, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan meal: %w", err)
 		}
 		m.Day = day.Format("2006-01-02")
-		if aiRaw != nil {
-			m.AIRaw = json.RawMessage(aiRaw)
-		}
 		meals = append(meals, m)
 		ids = append(ids, m.ID)
 	}
@@ -158,43 +254,74 @@ func (d *DB) queryMeals(ctx context.Context, where string, args []any) ([]food.M
 	return meals, nil
 }
 
+// foodColumns is the shared SELECT list for a food row.
+const foodColumns = `id, meal_id, position, eaten_at, name, brand, quantity, grams, fraction_pct,
+	calories, protein_mg, carbs_mg, fat_mg, fiber_mg, sat_fat_mg, sugar_mg, sodium_mg,
+	micros, tier, tier_reason, source, source_ref, confidence,
+	fdc_id, fdc_data_type, resolution_tier, portion_source, tier_source,
+	input_kind, photo_key, photo_url, ai_model, ai_raw`
+
+func scanFood(rows pgx.Rows, it *food.MealItem) error {
+	var micros, aiRaw []byte
+	if err := rows.Scan(&it.ID, &it.MealID, &it.Position, &it.EatenAt, &it.Name, &it.Brand, &it.Quantity, &it.Grams, &it.FractionPct,
+		&it.Calories, &it.ProteinMg, &it.CarbsMg, &it.FatMg, &it.FiberMg, &it.SatFatMg, &it.SugarMg, &it.SodiumMg,
+		&micros, &it.Tier, &it.TierReason, &it.Source, &it.SourceRef, &it.Confidence,
+		&it.FDCID, &it.FDCDataType, &it.ResolutionTier, &it.PortionSource, &it.TierSource,
+		&it.InputKind, &it.PhotoKey, &it.PhotoURL, &it.AIModel, &aiRaw); err != nil {
+		return err
+	}
+	if micros != nil {
+		it.Micros = json.RawMessage(micros)
+	}
+	if aiRaw != nil {
+		it.AIRaw = json.RawMessage(aiRaw)
+	}
+	return nil
+}
+
 func (d *DB) itemsForMeals(ctx context.Context, mealIDs []int64) (map[int64][]food.MealItem, error) {
-	rows, err := d.pool.Query(ctx, `
-		SELECT id, meal_id, position, name, brand, quantity, grams, fraction_pct,
-		       calories, protein_mg, carbs_mg, fat_mg, fiber_mg, sat_fat_mg, sugar_mg, sodium_mg,
-		       micros, tier, tier_reason, source, source_ref, confidence,
-		       fdc_id, fdc_data_type, resolution_tier, portion_source, tier_source
-		FROM meal_items WHERE meal_id = ANY($1) ORDER BY meal_id, position`, mealIDs)
+	rows, err := d.pool.Query(ctx, `SELECT `+foodColumns+` FROM meal_items WHERE meal_id = ANY($1) ORDER BY meal_id, position`, mealIDs)
 	if err != nil {
-		return nil, fmt.Errorf("query meal items: %w", err)
+		return nil, fmt.Errorf("query foods: %w", err)
 	}
 	defer rows.Close()
 
 	result := map[int64][]food.MealItem{}
 	for rows.Next() {
 		var it food.MealItem
-		var micros []byte
-		if err := rows.Scan(&it.ID, &it.MealID, &it.Position, &it.Name, &it.Brand, &it.Quantity, &it.Grams, &it.FractionPct,
-			&it.Calories, &it.ProteinMg, &it.CarbsMg, &it.FatMg, &it.FiberMg, &it.SatFatMg, &it.SugarMg, &it.SodiumMg,
-			&micros, &it.Tier, &it.TierReason, &it.Source, &it.SourceRef, &it.Confidence,
-			&it.FDCID, &it.FDCDataType, &it.ResolutionTier, &it.PortionSource, &it.TierSource); err != nil {
-			return nil, fmt.Errorf("scan meal item: %w", err)
-		}
-		if micros != nil {
-			it.Micros = json.RawMessage(micros)
+		if err := scanFood(rows, &it); err != nil {
+			return nil, fmt.Errorf("scan food: %w", err)
 		}
 		result[it.MealID] = append(result[it.MealID], it)
 	}
 	return result, rows.Err()
 }
 
-// ListAllMeals returns every meal with its items, ordered by day, for export.
+func (d *DB) queryFoods(ctx context.Context, where string, args []any) ([]food.MealItem, error) {
+	rows, err := d.pool.Query(ctx, `SELECT `+foodColumns+` FROM meal_items WHERE `+where+` ORDER BY meal_id, position`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query foods: %w", err)
+	}
+	defer rows.Close()
+
+	var out []food.MealItem
+	for rows.Next() {
+		var it food.MealItem
+		if err := scanFood(rows, &it); err != nil {
+			return nil, fmt.Errorf("scan food: %w", err)
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// ListAllMeals returns every meal container with its foods, for export.
 func (d *DB) ListAllMeals(ctx context.Context) ([]food.Meal, error) {
 	return d.queryMeals(ctx, "TRUE", nil)
 }
 
-// ListMealsRange returns meals with items for the inclusive [start, end] day
-// range, ordered by day — the analysis export's source for meal detail.
+// ListMealsRange returns meal containers with foods for the inclusive
+// [start, end] day range — the analysis export's source for meal detail.
 func (d *DB) ListMealsRange(ctx context.Context, start, end string) ([]food.Meal, error) {
 	return d.queryMeals(ctx, "m.day >= $1::date AND m.day <= $2::date", []any{start, end})
 }
@@ -218,38 +345,7 @@ func (d *DB) DataRange(ctx context.Context) (string, string, bool, error) {
 	return minDay.Format("2006-01-02"), maxDay.Format("2006-01-02"), true, nil
 }
 
-func (d *DB) UpdateMeal(ctx context.Context, m *food.Meal) error {
-	tx, err := d.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	tag, err := tx.Exec(ctx, `
-		UPDATE meals SET day=$1::date, slot=$2, description=$3, input_kind=$4,
-		    photo_key=$5, photo_url=$6, ai_model=$7, ai_raw=$8, updated_at=NOW()
-		WHERE id=$9`,
-		m.Day, m.Slot, m.Description, m.InputKind, m.PhotoKey, m.PhotoURL, m.AIModel, nullableRaw(m.AIRaw), m.ID)
-	if err != nil {
-		return fmt.Errorf("update meal: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("meal not found")
-	}
-
-	if _, err := tx.Exec(ctx, "DELETE FROM meal_items WHERE meal_id = $1", m.ID); err != nil {
-		return fmt.Errorf("delete meal items: %w", err)
-	}
-	if err := insertMealItems(ctx, tx, m.ID, m.Items); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
-}
-
+// DeleteMeal clears a whole (day, slot) container — its foods cascade.
 func (d *DB) DeleteMeal(ctx context.Context, id int64) error {
 	_, err := d.pool.Exec(ctx, "DELETE FROM meals WHERE id = $1", id)
 	if err != nil {
@@ -268,9 +364,9 @@ func (d *DB) CreateFavorite(ctx context.Context, f *food.Favorite) error {
 	// Upsert by case-insensitive name: re-favoriting replaces the template
 	// rather than piling up duplicates.
 	err = d.pool.QueryRow(ctx, `
-		INSERT INTO favorites (name, items) VALUES ($1, $2)
-		ON CONFLICT (lower(name)) DO UPDATE SET items = EXCLUDED.items
-		RETURNING id, created_at`, f.Name, items).
+		INSERT INTO favorites (name, kind, items) VALUES ($1, $2, $3)
+		ON CONFLICT (lower(name)) DO UPDATE SET kind = EXCLUDED.kind, items = EXCLUDED.items
+		RETURNING id, created_at`, f.Name, f.Kind, items).
 		Scan(&f.ID, &f.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("upsert favorite: %w", err)
@@ -279,7 +375,7 @@ func (d *DB) CreateFavorite(ctx context.Context, f *food.Favorite) error {
 }
 
 func (d *DB) ListFavorites(ctx context.Context) ([]food.Favorite, error) {
-	rows, err := d.pool.Query(ctx, `SELECT id, name, items, created_at FROM favorites ORDER BY lower(name)`)
+	rows, err := d.pool.Query(ctx, `SELECT id, name, kind, items, created_at FROM favorites ORDER BY lower(name)`)
 	if err != nil {
 		return nil, fmt.Errorf("list favorites: %w", err)
 	}
@@ -289,7 +385,7 @@ func (d *DB) ListFavorites(ctx context.Context) ([]food.Favorite, error) {
 	for rows.Next() {
 		var f food.Favorite
 		var items []byte
-		if err := rows.Scan(&f.ID, &f.Name, &items, &f.CreatedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.Name, &f.Kind, &items, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan favorite: %w", err)
 		}
 		if err := json.Unmarshal(items, &f.Items); err != nil {

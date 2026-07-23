@@ -28,6 +28,11 @@ type microsCache map[string]json.RawMessage
 // microsCache, which caches the full micronutrient payload for storage.
 type resolvedCache map[string]nutrition.PerHundredGrams
 
+// searchCache holds each usda_search result (slim, no micronutrient list) by
+// "usda:<fdcid>", so finish() can attach the chosen entry's name and build the
+// one-tap alternative matches for the confirm step (item 4).
+type searchCache map[string]nutrition.FDCFood
+
 // maxToolRounds caps the agentic tool-use loop before record_meal is forced.
 const maxToolRounds = 8
 
@@ -118,6 +123,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 	messages := []Message{first}
 	cache := microsCache{}
 	resolved := resolvedCache{}
+	search := searchCache{}
 	start := time.Now()
 
 	for round := 0; round < maxToolRounds; round++ {
@@ -131,7 +137,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 
 		if in, ok := extractRecordMeal(resp.Content); ok {
 			p.log.Info("parse done", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
-			return p.finish(in, resp.Model, messages, cache, resolved)
+			return p.finish(in, resp.Model, messages, cache, resolved, search)
 		}
 		if in, ok := extractLogExercise(resp.Content); ok {
 			p.log.Info("parse done (exercise)", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
@@ -145,7 +151,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 			continue
 		}
 
-		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache, resolved, emit)
+		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache, resolved, search, emit)
 		if !calledAny {
 			messages = append(messages, UserMessage(TextBlock(
 				"Continue. When you have enough information, call record_meal to finish.")))
@@ -176,7 +182,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 
 	if in, ok := extractRecordMeal(resp.Content); ok {
 		p.log.Info("parse done (forced)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
-		return p.finish(in, resp.Model, messages, cache, resolved)
+		return p.finish(in, resp.Model, messages, cache, resolved, search)
 	}
 	if in, ok := extractLogExercise(resp.Content); ok {
 		p.log.Info("parse done (forced exercise)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
@@ -274,21 +280,21 @@ func extractLogExercise(content []json.RawMessage) (*logExerciseInput, bool) {
 // executeTools runs every tool_use block in content and returns the matching
 // tool_result blocks, in order. calledAny is false when content had no tool
 // calls at all (the model just talked).
-func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage, cache microsCache, resolved resolvedCache, emit Progress) (results []json.RawMessage, calledAny bool) {
+func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage, cache microsCache, resolved resolvedCache, search searchCache, emit Progress) (results []json.RawMessage, calledAny bool) {
 	for _, b := range decodeBlocks(content) {
 		if b.Type != "tool_use" {
 			continue
 		}
 		calledAny = true
-		results = append(results, p.executeTool(ctx, b, cache, resolved, emit))
+		results = append(results, p.executeTool(ctx, b, cache, resolved, search, emit))
 	}
 	return results, calledAny
 }
 
-func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsCache, resolved resolvedCache, emit Progress) json.RawMessage {
+func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsCache, resolved resolvedCache, search searchCache, emit Progress) json.RawMessage {
 	switch block.Name {
 	case toolUSDASearch:
-		return p.execUSDASearch(ctx, block, cache, resolved, emit)
+		return p.execUSDASearch(ctx, block, cache, resolved, search, emit)
 	case toolOFFBarcode:
 		return p.execOFFBarcode(ctx, block, cache, emit)
 	case toolCanonicalLookup:
@@ -336,7 +342,7 @@ func (p *Parser) execCanonicalLookup(ctx context.Context, block blockMeta, resol
 	return ToolResultBlock(block.ID, string(body), false)
 }
 
-func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache microsCache, resolved resolvedCache, emit Progress) json.RawMessage {
+func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache microsCache, resolved resolvedCache, search searchCache, emit Progress) json.RawMessage {
 	var in struct {
 		Query    string `json:"query"`
 		PageSize int    `json:"page_size"`
@@ -363,17 +369,19 @@ func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache micr
 	// food can carry 100+ nutrient entries, re-sent as input tokens every round.
 	slim := make([]nutrition.FDCFood, len(results))
 	for i, f := range results {
-		resolved[food.SourceUSDA+":"+strconv.Itoa(f.FDCID)] = f.Per100g
+		key := food.SourceUSDA + ":" + strconv.Itoa(f.FDCID)
+		resolved[key] = f.Per100g
 		if len(f.Nutrients) > 0 {
 			payload, err := json.Marshal(struct {
 				Nutrients []nutrition.NutrientAmount `json:"nutrients"`
 			}{f.Nutrients})
 			if err == nil {
-				cache[food.SourceUSDA+":"+strconv.Itoa(f.FDCID)] = payload
+				cache[key] = payload
 			}
 		}
 		f.Nutrients = nil
 		slim[i] = f
+		search[key] = f // slim (no nutrients): name, data_type, per-100g, portions
 	}
 	body, err := json.Marshal(slim)
 	if err != nil {
@@ -419,7 +427,7 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache micr
 // DB, so a rough item just becomes something Jim edits or deletes in the
 // draft preview), attaches cached full nutrient payloads as micros, and
 // packages the trace as ai_raw.
-func (p *Parser) finish(in *recordMealInput, model string, messages []Message, cache microsCache, resolved resolvedCache) (*food.ParseResult, error) {
+func (p *Parser) finish(in *recordMealInput, model string, messages []Message, cache microsCache, resolved resolvedCache, search searchCache) (*food.ParseResult, error) {
 	var extraNotes []string
 	for i := range in.Items {
 		it := &in.Items[i]
@@ -438,6 +446,7 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message, c
 		// weight, recompute every macro from the source of truth.
 		resolveNutrition(it, resolved, &extraNotes)
 		setProvenance(it)
+		attachMatchInfo(it, search)
 		if len(it.Micros) == 0 && it.SourceRef != nil && *it.SourceRef != "" {
 			if payload, ok := cache[it.Source+":"+*it.SourceRef]; ok {
 				it.Micros = payload
@@ -504,6 +513,40 @@ func resolveNutrition(it *food.MealItem, resolved resolvedCache, notes *[]string
 	it.SatFatMg = per.SatFatMg * g / 100
 	it.SugarMg = per.SugarMg * g / 100
 	it.SodiumMg = per.SodiumMg * g / 100
+}
+
+// attachMatchInfo (item 4) sets the resolved FDC entry's name and turns the
+// model's alternative fdc_ids into full MatchAlternatives (name + data_type +
+// per-100g, so the PWA can recompute nutrition on a swap without re-parsing).
+// Only for usda items; the raw id list is cleared so it doesn't leak downstream.
+func attachMatchInfo(it *food.MealItem, search searchCache) {
+	defer func() { it.AlternativeFDCIDs = nil }()
+	if it.Source != food.SourceUSDA {
+		return
+	}
+	if it.SourceRef != nil {
+		if fdc, ok := search[food.SourceUSDA+":"+*it.SourceRef]; ok {
+			it.MatchDescription = fdc.Description
+		}
+	}
+	for _, altID := range it.AlternativeFDCIDs {
+		fdc, ok := search[food.SourceUSDA+":"+altID]
+		if !ok {
+			continue
+		}
+		id, err := strconv.ParseInt(altID, 10, 64)
+		if err != nil {
+			continue
+		}
+		it.Alternatives = append(it.Alternatives, food.MatchAlternative{
+			FDCID: id, Description: fdc.Description, DataType: fdc.DataType,
+			Per100g: food.Per100{
+				Calories: fdc.Per100g.Calories, ProteinMg: fdc.Per100g.ProteinMg, CarbsMg: fdc.Per100g.CarbsMg,
+				FatMg: fdc.Per100g.FatMg, FiberMg: fdc.Per100g.FiberMg, SatFatMg: fdc.Per100g.SatFatMg,
+				SugarMg: fdc.Per100g.SugarMg, SodiumMg: fdc.Per100g.SodiumMg,
+			},
+		})
+	}
 }
 
 // setProvenance fills the resolution-provenance fields (item 3): the FDC id
@@ -629,6 +672,7 @@ TIERS
 HOW NUTRITION IS COMPUTED -- you resolve, the app does the arithmetic
 - For usda and off items you do NOT compute calories or macros. Put the chosen FDC id (digits only) in source_ref, the result's data_type in fdc_data_type, and the FULL-PORTION weight in grams -- the app multiplies the entry's per-100g values by those grams itself. Resolve grams from the search result's "portions" household-measure weights when present (e.g. "1/4 cup" -> the matching portion's gram_weight) instead of guessing; this is what makes a quarter cup and a half cup differ correctly. You may omit the calorie/macro fields entirely for these items.
 - For ai, label, and web items there is no database entry to scale, so you DO provide full-portion calories and every macro yourself.
+- For usda items, also fill alternative_fdc_ids with the other plausible search results you saw (best first, up to 3) so Jim can fix a wrong match in one tap.
 - fraction_pct is still separate from grams: grams is the full portion, fraction_pct is how much of it was eaten.
 
 UNITS -- integers only, never floats, in every numeric field you return

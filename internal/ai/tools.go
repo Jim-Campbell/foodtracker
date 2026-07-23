@@ -99,6 +99,7 @@ var recordMealSchema = json.RawMessage(`{
           },
           "source_ref": { "type": ["string", "null"], "description": "For usda: the FDC id (digits only). For off: the barcode. For web: the source URL. The app parses the FDC id from here to compute nutrition, so it must be exactly the chosen result's fdc_id." },
           "fdc_data_type": { "type": ["string", "null"], "description": "For usda items, the chosen search result's data_type, verbatim: 'Foundation', 'SR Legacy', 'Survey (FNDDS)', or 'Branded'. Null for non-usda." },
+          "alternative_fdc_ids": { "type": "array", "items": { "type": "string" }, "description": "For usda items: the fdc_ids (digits only) of the OTHER plausible search results you considered but didn't pick, best first, up to 3. The app shows these as one-tap alternatives so Jim can fix a wrong match. Omit for non-usda items." },
           "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
         },
         "required": [

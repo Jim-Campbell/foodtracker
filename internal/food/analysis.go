@@ -36,7 +36,6 @@ type AnalysisExport struct {
 	AnalysisWarnings []string            `json:"analysis_warnings"`
 	Days             []AnalysisDay       `json:"days"`
 	MealGroups       []AnalysisMealGroup `json:"meal_groups"`
-	Entries          []AnalysisEntry     `json:"entries"`
 	Exercise         []AnalysisSession   `json:"exercise"`
 	Weights          []AnalysisWeight    `json:"weights"`
 }
@@ -133,25 +132,6 @@ type AnalysisMealGroup struct {
 	Items              []AnalysisItem `json:"items"`
 }
 
-// AnalysisEntry is one raw logging entry (one DB meal row) in display units —
-// the debug view under the grouped MealGroups. Do not treat these as eating
-// occasions; use MealGroups for that.
-type AnalysisEntry struct {
-	Date        string         `json:"date"`
-	Slot        string         `json:"slot,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Calories    int64          `json:"calories"`
-	ProteinG    float64        `json:"protein_g"`
-	CarbsG      float64        `json:"carbs_g"`
-	FatG        float64        `json:"fat_g"`
-	FiberG      float64        `json:"fiber_g"`
-	SatFatG     float64        `json:"sat_fat_g"`
-	SugarG      float64        `json:"sugar_g"`
-	SodiumMg    int64          `json:"sodium_mg"`
-	Score       *int           `json:"score,omitempty"`
-	Items       []AnalysisItem `json:"items"`
-}
-
 // AnalysisItem is one food item's as-eaten nutrition in display units.
 type AnalysisItem struct {
 	Name       string  `json:"name"`
@@ -191,13 +171,6 @@ type AnalysisWeight struct {
 	WeightLb float64 `json:"weight_lb"`
 	Note     string  `json:"note,omitempty"`
 }
-
-// snackOccasionGap splits a day's snack entries into separate occasions: two
-// snack entries more than this far apart in eaten_at are different snacking
-// occasions, closer together they're one occasion logged as multiple entries.
-// Main meals (breakfast/lunch/dinner) never split — they always collapse to
-// one group per slot.
-const snackOccasionGap = 120 * time.Minute
 
 // slotRank orders meal groups within a day for deterministic output.
 var slotRank = map[string]int{
@@ -327,35 +300,14 @@ func (s *Service) ExportAnalysis(ctx context.Context, start, end string) (*Analy
 		return a
 	}
 
-	// Raw per-entry detail + per-day food accumulation.
-	outEntries := make([]AnalysisEntry, 0, len(meals))
+	// Per-day food accumulation (the meal-group detail is built separately).
 	for _, m := range meals {
 		a := dayOf(m.Day)
 		a.hasFood = true
 		a.rawItems = append(a.rawItems, m.Items...)
-
-		var tot foodTotals
-		ae := AnalysisEntry{Date: m.Day, Description: m.Description, Items: make([]AnalysisItem, 0, len(m.Items))}
-		if m.Slot != nil {
-			ae.Slot = *m.Slot
-		}
 		for _, it := range m.Items {
-			ai := tot.addItem(it)
-			ae.Items = append(ae.Items, ai)
-			a.food.addItem(it) // accumulate into the day total
+			a.food.addItem(it)
 		}
-		ae.Calories = tot.cal
-		ae.ProteinG = mgToG(tot.protein)
-		ae.CarbsG = mgToG(tot.carbs)
-		ae.FatG = mgToG(tot.fat)
-		ae.FiberG = mgToG(tot.fiber)
-		ae.SatFatG = mgToG(tot.satfat)
-		ae.SugarG = mgToG(tot.sugar)
-		ae.SodiumMg = tot.sodium
-		if sc, ok := DayScore(m.Items); ok {
-			ae.Score = &sc
-		}
-		outEntries = append(outEntries, ae)
 	}
 
 	mealGroups := buildMealGroups(meals)
@@ -436,7 +388,6 @@ func (s *Service) ExportAnalysis(ctx context.Context, start, end string) (*Analy
 	}
 
 	// Deterministic ordering regardless of store implementation.
-	sort.SliceStable(outEntries, func(i, j int) bool { return outEntries[i].Date < outEntries[j].Date })
 	sort.SliceStable(outSessions, func(i, j int) bool { return outSessions[i].Date < outSessions[j].Date })
 	sort.SliceStable(outWeights, func(i, j int) bool { return outWeights[i].Date < outWeights[j].Date })
 
@@ -457,105 +408,56 @@ func (s *Service) ExportAnalysis(ctx context.Context, start, end string) (*Analy
 			},
 			QualityScore:                   "0-100, calorie-weighted mean of per-item diet-quality tiers (higher is better); null on days with no calorie-bearing food",
 			Coverage:                       coverage,
-			MealGroupsAreTheAnalyticalUnit: "One object per (date, slot); snacks split into occasions by time gap. entry_count reflects logging granularity only and must never be interpreted as eating frequency.",
+			MealGroupsAreTheAnalyticalUnit: "One object per (date, slot) — the eating occasion. entry_count is the number of foods in it, never a count of eating events.",
 			Notes:                          "Nutrition values are as-eaten (portion fraction applied). Missing data is null, never 0 — see meta.coverage and analysis_warnings before averaging any domain. Exercise is tracked independently and never affects the calorie budget.",
 		},
 		AnalysisWarnings: buildWarnings(start, coverage),
 		Days:             outDays,
 		MealGroups:       mealGroups,
-		Entries:          outEntries,
 		Exercise:         outSessions,
 		Weights:          outWeights,
 	}, nil
 }
 
-// buildMealGroups collapses raw entries into eating occasions. Entries are
-// grouped by (date, slot); every slot but snack yields exactly one group per
-// day (occasion 0), while snack entries are split into occasions whenever
-// their eaten_at times are more than snackOccasionGap apart. Output is ordered
-// by date, slot rank, then occasion.
+// buildMealGroups maps each meal container to one group. Since a meal is now
+// one-per-(date, slot), the group IS the eating occasion — no entry clustering
+// needed. Output is ordered by date then slot rank.
 func buildMealGroups(meals []Meal) []AnalysisMealGroup {
-	// Bucket by (date, slot). Slot is "" when unspecified.
-	type key struct{ date, slot string }
-	buckets := map[key][]Meal{}
-	order := []key{}
+	groups := make([]AnalysisMealGroup, 0, len(meals))
 	for _, m := range meals {
 		slot := ""
 		if m.Slot != nil {
 			slot = *m.Slot
 		}
-		k := key{m.Day, slot}
-		if _, seen := buckets[k]; !seen {
-			order = append(order, k)
-		}
-		buckets[k] = append(buckets[k], m)
+		groups = append(groups, mealGroupOf(m.Day, slot, m))
 	}
-
-	groups := make([]AnalysisMealGroup, 0, len(order))
-	for _, k := range order {
-		entries := buckets[k]
-		// Deterministic within-bucket order: by eaten_at, then id.
-		sort.SliceStable(entries, func(i, j int) bool {
-			if !entries[i].EatenAt.Equal(entries[j].EatenAt) {
-				return entries[i].EatenAt.Before(entries[j].EatenAt)
-			}
-			return entries[i].ID < entries[j].ID
-		})
-
-		// Split into occasions. Snacks break on a time gap; everything else is
-		// a single occasion.
-		occasions := [][]Meal{}
-		if k.slot == SlotSnack {
-			var cur []Meal
-			for i, m := range entries {
-				if i > 0 && m.EatenAt.Sub(entries[i-1].EatenAt) > snackOccasionGap {
-					occasions = append(occasions, cur)
-					cur = nil
-				}
-				cur = append(cur, m)
-			}
-			if len(cur) > 0 {
-				occasions = append(occasions, cur)
-			}
-		} else {
-			occasions = append(occasions, entries)
-		}
-
-		for idx, occ := range occasions {
-			groups = append(groups, mealGroupOf(k.date, k.slot, idx, occ))
-		}
-	}
-
 	sort.SliceStable(groups, func(i, j int) bool {
 		if groups[i].Date != groups[j].Date {
 			return groups[i].Date < groups[j].Date
 		}
-		if ri, rj := rankOf(groups[i].Slot), rankOf(groups[j].Slot); ri != rj {
-			return ri < rj
-		}
-		return groups[i].OccasionIndex < groups[j].OccasionIndex
+		return rankOf(groups[i].Slot) < rankOf(groups[j].Slot)
 	})
 	return groups
 }
 
-// mealGroupOf builds one meal group from the entries in a single occasion.
-func mealGroupOf(date, slot string, occasion int, entries []Meal) AnalysisMealGroup {
+// mealGroupOf builds one meal group from a container's foods. Descriptions are
+// the food names in it (there's no longer a per-entry input string), and
+// entry_count is the number of foods.
+func mealGroupOf(date, slot string, m Meal) AnalysisMealGroup {
 	g := AnalysisMealGroup{
-		Date: date, Slot: slot, OccasionIndex: occasion,
-		EntryCount:   len(entries),
+		Date: date, Slot: slot, OccasionIndex: 0,
+		EntryCount:   len(m.Items),
 		Descriptions: []string{},
 		Items:        []AnalysisItem{},
 	}
 	var tot foodTotals
 	var raw []MealItem
-	for _, m := range entries {
-		if d := strings.TrimSpace(m.Description); d != "" {
-			g.Descriptions = append(g.Descriptions, d)
+	for _, it := range m.Items {
+		if n := strings.TrimSpace(it.Name); n != "" {
+			g.Descriptions = append(g.Descriptions, n)
 		}
-		for _, it := range m.Items {
-			g.Items = append(g.Items, tot.addItem(it))
-			raw = append(raw, it)
-		}
+		g.Items = append(g.Items, tot.addItem(it))
+		raw = append(raw, it)
 	}
 	g.Calories = tot.cal
 	g.ProteinG = mgToG(tot.protein)

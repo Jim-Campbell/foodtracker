@@ -287,6 +287,61 @@ func TestParserResolvesNutritionFromFDC(t *testing.T) {
 	}
 }
 
+// TestParserAttachesMatchAlternatives: for a usda item, finish() sets the
+// chosen FDC entry's name and turns the model's alternative_fdc_ids into full
+// MatchAlternatives (with per-100g) for the one-tap swap (item 4).
+func TestParserAttachesMatchAlternatives(t *testing.T) {
+	chosen, alt1, alt2 := "111", "222", "333"
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolUSDASearch, map[string]any{"query": "salmon"})},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "salmon"
+					it.Source = food.SourceUSDA
+					it.SourceRef = &chosen
+					dt := "Foundation"
+					it.FDCDataType = &dt
+					g := 100
+					it.Grams = &g
+					it.AlternativeFDCIDs = []string{alt1, alt2}
+				})},
+			})},
+		},
+	}}
+	usda := &fakeUSDA{results: []nutrition.FDCFood{
+		{FDCID: 111, Description: "Salmon, Atlantic, cooked", DataType: "Foundation", Per100g: nutrition.PerHundredGrams{Calories: 200, ProteinMg: 25000}},
+		{FDCID: 222, Description: "Salmon, pink, canned", DataType: "SR Legacy", Per100g: nutrition.PerHundredGrams{Calories: 140, ProteinMg: 20000}},
+		{FDCID: 333, Description: "SALMON (Branded)", DataType: "Branded", Per100g: nutrition.PerHundredGrams{Calories: 210, ProteinMg: 22000}},
+	}}
+
+	p := NewParser(messenger, usda, &fakeOFF{}, nil, "", false, slog.Default())
+	result, err := p.ParseText(context.Background(), "salmon", "2026-07-20", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	it := result.Items[0]
+	if it.MatchDescription != "Salmon, Atlantic, cooked" {
+		t.Errorf("MatchDescription = %q, want the chosen entry's name", it.MatchDescription)
+	}
+	if len(it.Alternatives) != 2 {
+		t.Fatalf("Alternatives = %d, want 2", len(it.Alternatives))
+	}
+	if it.Alternatives[0].Description != "Salmon, pink, canned" || it.Alternatives[0].FDCID != 222 {
+		t.Errorf("alt[0] = %+v, want the canned-salmon match", it.Alternatives[0])
+	}
+	if it.Alternatives[0].Per100g.Calories != 140 {
+		t.Errorf("alt[0] per-100g calories = %d, want 140 (so a swap can recompute)", it.Alternatives[0].Per100g.Calories)
+	}
+	if it.AlternativeFDCIDs != nil {
+		t.Errorf("AlternativeFDCIDs should be cleared, got %v", it.AlternativeFDCIDs)
+	}
+}
+
 // TestParserCanonicalReuse: on a canonical_lookup hit the model records the
 // item straight from the cached entry (no usda_search), and finish() computes
 // nutrition from the cached per-100g exactly as it would from a fresh lookup

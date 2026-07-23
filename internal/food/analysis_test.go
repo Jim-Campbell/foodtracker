@@ -24,7 +24,7 @@ func TestExportAnalysis(t *testing.T) {
 			Tier: TierHardYes, Source: SourceManual,
 		}},
 	}
-	if err := svc.CreateMeal(ctx, m); err != nil {
+	if err := createMeal(svc, ctx, m); err != nil {
 		t.Fatalf("CreateMeal: %v", err)
 	}
 	if err := svc.UpsertWeight(ctx, &Weight{Day: "2026-07-10", WeightG: 85004}); err != nil {
@@ -37,7 +37,7 @@ func TestExportAnalysis(t *testing.T) {
 		t.Fatalf("CreateExercise strength: %v", err)
 	}
 	// Out-of-range meal must not appear.
-	if err := svc.CreateMeal(ctx, &Meal{Day: "2026-08-01", Items: []MealItem{{Name: "toast", Calories: 100, Tier: TierNeutral, FractionPct: 100}}}); err != nil {
+	if err := createMeal(svc, ctx, &Meal{Day: "2026-08-01", Items: []MealItem{{Name: "toast", Calories: 100, Tier: TierNeutral, FractionPct: 100}}}); err != nil {
 		t.Fatalf("CreateMeal out of range: %v", err)
 	}
 
@@ -78,8 +78,7 @@ func TestExportAnalysis(t *testing.T) {
 		t.Errorf("Exercise summary = %+v", d.Exercise)
 	}
 
-	// Two dinner entries would collapse to one group; here it's a single entry,
-	// so one group and one raw entry.
+	// One dinner food -> one group with one food.
 	if len(doc.MealGroups) != 1 {
 		t.Fatalf("MealGroups = %d, want 1", len(doc.MealGroups))
 	}
@@ -90,10 +89,7 @@ func TestExportAnalysis(t *testing.T) {
 	if g.Calories != 200 || g.ProteinG != 20 {
 		t.Errorf("group as-eaten = %d kcal / %v g protein", g.Calories, g.ProteinG)
 	}
-	if len(doc.Entries) != 1 {
-		t.Fatalf("Entries = %d, want 1", len(doc.Entries))
-	}
-	item := doc.Entries[0].Items[0]
+	item := g.Items[0]
 	if item.Grams == nil || *item.Grams != 150 {
 		t.Errorf("item Grams = %v, want 150 (as-eaten)", item.Grams)
 	}
@@ -127,22 +123,21 @@ func TestExportAnalysis(t *testing.T) {
 	}
 }
 
-// TestExportAnalysisMealGroups checks that multiple entries in the same slot on
-// the same day collapse into one meal group (entry_count reflects logging, not
-// eating frequency), while snacks split into occasions by time gap.
+// TestExportAnalysisMealGroups checks that foods logged to the same slot across
+// separate logging actions land in one meal group (one container per slot), and
+// entry_count is the number of foods.
 func TestExportAnalysisMealGroups(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 
-	// Breakfast logged as three separate entries — one meal group, entry_count 3.
+	// Breakfast built up over three separate logs — one container, three foods.
 	for i := 0; i < 3; i++ {
 		m := &Meal{
 			Day: "2026-07-10", Slot: strPtr(SlotBreakfast),
-			Description: "egg dish",
-			Items:       []MealItem{{Name: "eggs", Calories: 100, ProteinMg: 10000, Tier: TierHardYes, FractionPct: 100}},
+			Items: []MealItem{{Name: "eggs", Calories: 100, ProteinMg: 10000, Tier: TierHardYes, FractionPct: 100}},
 		}
-		if err := svc.CreateMeal(ctx, m); err != nil {
-			t.Fatalf("CreateMeal breakfast %d: %v", i, err)
+		if err := createMeal(svc, ctx, m); err != nil {
+			t.Fatalf("AddFoods breakfast %d: %v", i, err)
 		}
 	}
 
@@ -151,20 +146,17 @@ func TestExportAnalysisMealGroups(t *testing.T) {
 		t.Fatalf("ExportAnalysis: %v", err)
 	}
 	if len(doc.MealGroups) != 1 {
-		t.Fatalf("MealGroups = %d, want 1 (three entries collapse)", len(doc.MealGroups))
+		t.Fatalf("MealGroups = %d, want 1 (all breakfast foods in one container)", len(doc.MealGroups))
 	}
 	g := doc.MealGroups[0]
 	if g.EntryCount != 3 {
-		t.Errorf("EntryCount = %d, want 3", g.EntryCount)
+		t.Errorf("EntryCount = %d, want 3 (foods)", g.EntryCount)
 	}
 	if g.Calories != 300 {
-		t.Errorf("group Calories = %d, want 300 (3 entries summed)", g.Calories)
+		t.Errorf("group Calories = %d, want 300 (3 foods summed)", g.Calories)
 	}
 	if len(g.Descriptions) != 3 {
-		t.Errorf("Descriptions = %v, want 3", g.Descriptions)
-	}
-	if len(doc.Entries) != 3 {
-		t.Errorf("Entries = %d, want 3 (raw entries preserved)", len(doc.Entries))
+		t.Errorf("Descriptions = %v, want 3 food names", g.Descriptions)
 	}
 }
 
@@ -183,7 +175,7 @@ func TestDataRange(t *testing.T) {
 		t.Fatalf("empty DataRange: ok=%v err=%v, want ok=false", ok, err)
 	}
 
-	if err := svc.CreateMeal(ctx, &Meal{Day: "2026-07-10", Items: []MealItem{{Name: "egg", Calories: 70, Tier: TierNeutral, FractionPct: 100}}}); err != nil {
+	if err := createMeal(svc, ctx, &Meal{Day: "2026-07-10", Items: []MealItem{{Name: "egg", Calories: 70, Tier: TierNeutral, FractionPct: 100}}}); err != nil {
 		t.Fatalf("CreateMeal: %v", err)
 	}
 	if err := svc.CreateExercise(ctx, &ExerciseSession{Day: "2026-07-02", Type: ExerciseStrength}); err != nil {

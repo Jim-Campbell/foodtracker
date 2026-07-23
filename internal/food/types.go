@@ -80,6 +80,14 @@ const (
 	SlotSnack     = "snack"
 )
 
+// Favorite kinds: a single food or a whole meal (collection of foods).
+const (
+	FavoriteFood = "food"
+	FavoriteMeal = "meal"
+)
+
+var validFavoriteKinds = map[string]bool{FavoriteFood: true, FavoriteMeal: true}
+
 // Exercise types and input kinds. Exercise never touches the calorie budget.
 const (
 	ExerciseCardio     = "cardio"
@@ -125,30 +133,29 @@ var validSlots = map[string]bool{
 	SlotBreakfast: true, SlotLunch: true, SlotDinner: true, SlotSnack: true,
 }
 
-// Meal is one logged eating event. Day is a user-chosen date, independent of
-// EatenAt, so a late-night snack can be filed under the previous day.
+// Meal is the (day, slot) container — one Breakfast/Lunch/Dinner/Snack per day.
+// It holds foods (MealItems) but carries no nutrition, photo, or description of
+// its own; those live on each food. Day is a user-chosen date, so a late-night
+// snack can be filed under the previous day.
 type Meal struct {
-	ID          int64           `json:"id"`
-	Day         string          `json:"day"` // YYYY-MM-DD
-	EatenAt     time.Time       `json:"eaten_at"`
-	Slot        *string         `json:"slot,omitempty"`
-	Description string          `json:"description"`
-	InputKind   string          `json:"input_kind"`
-	PhotoKey    *string         `json:"photo_key,omitempty"`
-	PhotoURL    *string         `json:"photo_url,omitempty"`
-	AIModel     *string         `json:"ai_model,omitempty"`
-	AIRaw       json.RawMessage `json:"ai_raw,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	Items       []MealItem      `json:"items"`
+	ID        int64      `json:"id"`
+	Day       string     `json:"day"` // YYYY-MM-DD
+	Slot      *string    `json:"slot,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	Items     []MealItem `json:"items"`
 }
 
-// MealItem stores full-portion nutrition; as-eaten = value * FractionPct / 100.
-// Calories are integer kcal; macro/micro amounts are integer milligrams.
+// MealItem is one Food: the first-class logged unit. It stores full-portion
+// nutrition (as-eaten = value * FractionPct / 100; calories are integer kcal,
+// macro/micro amounts integer milligrams) plus its own logging metadata —
+// photo, input kind, AI trace, and eaten-at time — since foods added to one
+// slot over the day can each come from a different logging action.
 type MealItem struct {
 	ID          int64           `json:"id,omitempty"`
 	MealID      int64           `json:"meal_id,omitempty"`
 	Position    int             `json:"position"`
+	EatenAt     time.Time       `json:"eaten_at,omitempty"`
 	Name        string          `json:"name"`
 	Brand       *string         `json:"brand,omitempty"`
 	Quantity    string          `json:"quantity"`
@@ -175,6 +182,28 @@ type MealItem struct {
 	ResolutionTier *int    `json:"resolution_tier,omitempty"` // 1..4, see ResolutionTier consts
 	PortionSource  *string `json:"portion_source,omitempty"`  // weighed | package_unit | estimated
 	TierSource     *string `json:"tier_source,omitempty"`     // table | cascade
+	// Logging metadata (moved off the meal container in migration 012).
+	InputKind string          `json:"input_kind,omitempty"`
+	PhotoKey  *string         `json:"photo_key,omitempty"`
+	PhotoURL  *string         `json:"photo_url,omitempty"`
+	AIModel   *string         `json:"ai_model,omitempty"`
+	AIRaw     json.RawMessage `json:"ai_raw,omitempty"`
+	// Confirm-the-match fields (item 4), populated on a parse draft only and not
+	// persisted: the resolved FDC entry's name, the top alternative matches to
+	// swap to, and — on input from the model — the alternative fdc_ids it saw.
+	MatchDescription  string             `json:"match_description,omitempty"`
+	Alternatives      []MatchAlternative `json:"alternatives,omitempty"`
+	AlternativeFDCIDs []string           `json:"alternative_fdc_ids,omitempty"`
+}
+
+// MatchAlternative is an alternative FDC entry offered in the confirm step so a
+// wrong match is one tap to fix. Carries the per-100g so the PWA can recompute
+// nutrition when swapped, without another parse. Draft-only, never stored.
+type MatchAlternative struct {
+	FDCID       int64  `json:"fdc_id"`
+	Description string `json:"description"`
+	DataType    string `json:"fdc_data_type"`
+	Per100g     Per100 `json:"per_100g"`
 }
 
 // Weight is one day's weigh-in; a second entry for the same day replaces it.
@@ -292,6 +321,7 @@ type ParseResult struct {
 type Favorite struct {
 	ID        int64      `json:"id"`
 	Name      string     `json:"name"`
+	Kind      string     `json:"kind"` // food (single item) | meal (collection)
 	Items     []MealItem `json:"items"`
 	CreatedAt time.Time  `json:"created_at"`
 }

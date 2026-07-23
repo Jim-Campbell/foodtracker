@@ -24,60 +24,74 @@ func validDate(s string) error {
 	return nil
 }
 
-// validateMeal checks meal-level fields and every item, filling in defaults
-// (input_kind, fraction_pct) the way a manual entry would expect. Item
-// warnings (Atwater mismatches) clamp confidence to low but don't block the
-// save; item errors (bad enum, negative amount) do.
-func validateMeal(m *Meal) error {
-	if strings.TrimSpace(m.Day) == "" {
+// validateDaySlot checks the container coordinates a food is logged to.
+func validateDaySlot(day string, slot *string) error {
+	if strings.TrimSpace(day) == "" {
 		return fmt.Errorf("invalid: day is required")
 	}
-	if err := validDate(m.Day); err != nil {
+	if err := validDate(day); err != nil {
 		return err
 	}
-	if m.Slot != nil && !validSlots[*m.Slot] {
+	if slot != nil && *slot != "" && !validSlots[*slot] {
 		return fmt.Errorf("invalid: bad slot")
-	}
-	if m.InputKind == "" {
-		m.InputKind = InputManual
-	}
-	if !validInputKinds[m.InputKind] {
-		return fmt.Errorf("invalid: bad input_kind")
-	}
-	for i := range m.Items {
-		it := &m.Items[i]
-		if it.FractionPct == 0 {
-			it.FractionPct = 100
-		}
-		if it.Tier == "" {
-			it.Tier = TierNeutral
-		}
-		if it.Source == "" {
-			it.Source = SourceManual
-		}
-		if it.Confidence == "" {
-			it.Confidence = ConfidenceMedium
-		}
-		errs, warnings := ValidateItem(*it)
-		if len(errs) > 0 {
-			return fmt.Errorf("invalid: item %d (%s): %s", i, it.Name, strings.Join(errs, "; "))
-		}
-		if len(warnings) > 0 {
-			it.Confidence = ConfidenceLow
-		}
 	}
 	return nil
 }
 
-func (s *Service) CreateMeal(ctx context.Context, m *Meal) error {
-	if err := validateMeal(m); err != nil {
-		return err
+// validateFood fills in a food's defaults (input_kind, fraction_pct, tier,
+// source, confidence) the way a manual entry expects, then validates it. Item
+// warnings (Atwater mismatches) clamp confidence to low but don't block; hard
+// errors (bad enum, negative amount) do.
+func validateFood(it *MealItem) error {
+	if it.FractionPct == 0 {
+		it.FractionPct = 100
 	}
-	if err := s.store.CreateMeal(ctx, m); err != nil {
-		return err
+	if it.Tier == "" {
+		it.Tier = TierNeutral
 	}
-	s.accreteCanonical(ctx, m.Items)
+	if it.Source == "" {
+		it.Source = SourceManual
+	}
+	if it.Confidence == "" {
+		it.Confidence = ConfidenceMedium
+	}
+	if it.InputKind == "" {
+		it.InputKind = InputManual
+	}
+	if !validInputKinds[it.InputKind] {
+		return fmt.Errorf("invalid: bad input_kind")
+	}
+	errs, warnings := ValidateItem(*it)
+	if len(errs) > 0 {
+		return fmt.Errorf("invalid: food %q: %s", it.Name, strings.Join(errs, "; "))
+	}
+	if len(warnings) > 0 {
+		it.Confidence = ConfidenceLow
+	}
 	return nil
+}
+
+// AddFoods appends foods to a day's slot container. This is the save path for a
+// confirmed draft — three parsed foods become three first-class entries in the
+// slot, no wrapping entry.
+func (s *Service) AddFoods(ctx context.Context, day string, slot *string, items []MealItem) (*Meal, error) {
+	if err := validateDaySlot(day, slot); err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("invalid: at least one food is required")
+	}
+	for i := range items {
+		if err := validateFood(&items[i]); err != nil {
+			return nil, err
+		}
+	}
+	meal, err := s.store.AddFoods(ctx, day, slot, items)
+	if err != nil {
+		return nil, err
+	}
+	s.accreteCanonical(ctx, items)
+	return meal, nil
 }
 
 func (s *Service) GetMeal(ctx context.Context, id int64) (*Meal, error) {
@@ -98,25 +112,7 @@ func (s *Service) ListMealsByDay(ctx context.Context, day string) ([]Meal, error
 	return s.store.ListMealsByDay(ctx, day)
 }
 
-func (s *Service) UpdateMeal(ctx context.Context, m *Meal) error {
-	existing, err := s.store.GetMeal(ctx, m.ID)
-	if err != nil {
-		return err
-	}
-	if existing == nil {
-		return fmt.Errorf("not found: meal")
-	}
-	if err := validateMeal(m); err != nil {
-		return err
-	}
-	if err := s.store.UpdateMeal(ctx, m); err != nil {
-		return err
-	}
-	// A corrected match re-logs the food, propagating the new numbers forward.
-	s.accreteCanonical(ctx, m.Items)
-	return nil
-}
-
+// DeleteMeal clears a whole (day, slot) container and all its foods.
 func (s *Service) DeleteMeal(ctx context.Context, id int64) error {
 	existing, err := s.store.GetMeal(ctx, id)
 	if err != nil {
@@ -126,6 +122,52 @@ func (s *Service) DeleteMeal(ctx context.Context, id int64) error {
 		return fmt.Errorf("not found: meal")
 	}
 	return s.store.DeleteMeal(ctx, id)
+}
+
+func (s *Service) GetFood(ctx context.Context, id int64) (*MealItem, error) {
+	it, err := s.store.GetFood(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if it == nil {
+		return nil, fmt.Errorf("not found: food")
+	}
+	return it, nil
+}
+
+// UpdateFood edits one food and re-files it under the given (day, slot) — the
+// slot picker on the edit dialog moves a food by changing where it's filed.
+func (s *Service) UpdateFood(ctx context.Context, day string, slot *string, it *MealItem) error {
+	existing, err := s.store.GetFood(ctx, it.ID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("not found: food")
+	}
+	if err := validateDaySlot(day, slot); err != nil {
+		return err
+	}
+	if err := validateFood(it); err != nil {
+		return err
+	}
+	if err := s.store.UpdateFood(ctx, day, slot, it); err != nil {
+		return err
+	}
+	// A corrected match re-logs the food, propagating the new numbers forward.
+	s.accreteCanonical(ctx, []MealItem{*it})
+	return nil
+}
+
+func (s *Service) DeleteFood(ctx context.Context, id int64) error {
+	existing, err := s.store.GetFood(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return fmt.Errorf("not found: food")
+	}
+	return s.store.DeleteFood(ctx, id)
 }
 
 // ---- weights ----
@@ -166,6 +208,17 @@ func (s *Service) CreateFavorite(ctx context.Context, f *Favorite) error {
 	}
 	if len(f.Items) == 0 {
 		return fmt.Errorf("invalid: favorite needs at least one item")
+	}
+	if f.Kind == "" {
+		// Infer from shape: a single food is a food favorite, more a meal.
+		if len(f.Items) == 1 {
+			f.Kind = FavoriteFood
+		} else {
+			f.Kind = FavoriteMeal
+		}
+	}
+	if !validFavoriteKinds[f.Kind] {
+		return fmt.Errorf("invalid: bad favorite kind")
 	}
 	for i := range f.Items {
 		// A favorite is a template, not a row reference.

@@ -10,15 +10,16 @@ var errNotFoundExercise = errors.New("not found: exercise session")
 
 // fakeStore is an in-memory food.Store for service-level tests.
 type fakeStore struct {
-	meals     map[int64]*Meal
-	nextID    int64
-	weights   map[string]Weight
-	settings  Settings
-	favorites map[int64]*Favorite
-	nextFavID int64
-	exercise  map[int64]*ExerciseSession
-	nextExID  int64
-	canonical map[string]*CanonicalFood
+	meals      map[int64]*Meal
+	nextID     int64
+	weights    map[string]Weight
+	settings   Settings
+	favorites  map[int64]*Favorite
+	nextFavID  int64
+	exercise   map[int64]*ExerciseSession
+	nextExID   int64
+	nextItemID int64
+	canonical  map[string]*CanonicalFood
 }
 
 func newFakeStore() *fakeStore {
@@ -97,16 +98,40 @@ func (f *fakeStore) DeleteFavorite(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (f *fakeStore) CreateMeal(ctx context.Context, m *Meal) error {
-	f.nextID++
-	m.ID = f.nextID
+func slotKey(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func (f *fakeStore) mealFor(day string, slot *string) *Meal {
+	for _, m := range f.meals {
+		if m.Day == day && slotKey(m.Slot) == slotKey(slot) {
+			return m
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) AddFoods(ctx context.Context, day string, slot *string, items []MealItem) (*Meal, error) {
+	m := f.mealFor(day, slot)
+	if m == nil {
+		f.nextID++
+		m = &Meal{ID: f.nextID, Day: day, Slot: slot}
+		f.meals[m.ID] = m
+	}
+	for i := range items {
+		f.nextItemID++
+		it := items[i]
+		it.ID = f.nextItemID
+		it.MealID = m.ID
+		it.Position = len(m.Items)
+		m.Items = append(m.Items, it)
+	}
 	cp := *m
 	cp.Items = append([]MealItem{}, m.Items...)
-	for i := range cp.Items {
-		cp.Items[i].MealID = m.ID
-	}
-	f.meals[m.ID] = &cp
-	return nil
+	return &cp, nil
 }
 
 func (f *fakeStore) GetMeal(ctx context.Context, id int64) (*Meal, error) {
@@ -115,6 +140,7 @@ func (f *fakeStore) GetMeal(ctx context.Context, id int64) (*Meal, error) {
 		return nil, nil
 	}
 	cp := *m
+	cp.Items = append([]MealItem{}, m.Items...)
 	return &cp, nil
 }
 
@@ -122,22 +148,78 @@ func (f *fakeStore) ListMealsByDay(ctx context.Context, day string) ([]Meal, err
 	var out []Meal
 	for _, m := range f.meals {
 		if m.Day == day {
-			out = append(out, *m)
+			cp := *m
+			cp.Items = append([]MealItem{}, m.Items...)
+			out = append(out, cp)
 		}
 	}
 	return out, nil
 }
 
-func (f *fakeStore) UpdateMeal(ctx context.Context, m *Meal) error {
-	cp := *m
-	cp.Items = append([]MealItem{}, m.Items...)
-	f.meals[m.ID] = &cp
-	return nil
-}
-
 func (f *fakeStore) DeleteMeal(ctx context.Context, id int64) error {
 	delete(f.meals, id)
 	return nil
+}
+
+func (f *fakeStore) GetFood(ctx context.Context, id int64) (*MealItem, error) {
+	for _, m := range f.meals {
+		for i := range m.Items {
+			if m.Items[i].ID == id {
+				cp := m.Items[i]
+				return &cp, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (f *fakeStore) UpdateFood(ctx context.Context, day string, slot *string, food *MealItem) error {
+	var cur *Meal
+	idx := -1
+	for _, m := range f.meals {
+		for i := range m.Items {
+			if m.Items[i].ID == food.ID {
+				cur, idx = m, i
+				break
+			}
+		}
+		if idx >= 0 {
+			break
+		}
+	}
+	if idx < 0 {
+		return errors.New("not found: food")
+	}
+	cur.Items = append(cur.Items[:idx], cur.Items[idx+1:]...)
+	target := f.mealFor(day, slot)
+	if target == nil {
+		f.nextID++
+		target = &Meal{ID: f.nextID, Day: day, Slot: slot}
+		f.meals[target.ID] = target
+	}
+	fd := *food
+	fd.MealID = target.ID
+	fd.Position = len(target.Items)
+	target.Items = append(target.Items, fd)
+	if cur.ID != target.ID && len(cur.Items) == 0 {
+		delete(f.meals, cur.ID)
+	}
+	return nil
+}
+
+func (f *fakeStore) DeleteFood(ctx context.Context, id int64) error {
+	for _, m := range f.meals {
+		for i := range m.Items {
+			if m.Items[i].ID == id {
+				m.Items = append(m.Items[:i], m.Items[i+1:]...)
+				if len(m.Items) == 0 {
+					delete(f.meals, m.ID)
+				}
+				return nil
+			}
+		}
+	}
+	return errors.New("not found: food")
 }
 
 func (f *fakeStore) UpsertWeight(ctx context.Context, w *Weight) error {

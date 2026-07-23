@@ -74,7 +74,7 @@ func TestServiceAccretesCanonicalOnSave(t *testing.T) {
 			Source: SourceUSDA, SourceRef: &ref, Confidence: ConfidenceHigh,
 		}},
 	}
-	if err := svc.CreateMeal(ctx, m); err != nil {
+	if err := createMeal(svc, ctx, m); err != nil {
 		t.Fatalf("CreateMeal: %v", err)
 	}
 

@@ -26,11 +26,16 @@ func NewHandler(svc *food.Service, log *slog.Logger) *Handler {
 }
 
 func (h *Handler) Routes(r chi.Router) {
-	r.Post("/meals", h.createMeal)
+	// A food is the first-class logged unit; a meal is the (day, slot)
+	// container. Logging appends foods; the container is read/cleared as a unit.
+	r.Post("/foods", h.addFoods)
+	r.Get("/foods/{id}", h.getFood)
+	r.Put("/foods/{id}", h.updateFood)
+	r.Delete("/foods/{id}", h.deleteFood)
+
 	r.Get("/meals", h.listMeals)
 	r.Get("/meals/{id}", h.getMeal)
-	r.Put("/meals/{id}", h.updateMeal)
-	r.Delete("/meals/{id}", h.deleteMeal)
+	r.Delete("/meals/{id}", h.deleteMeal) // clears the whole slot
 
 	r.Get("/day/{date}", h.daySummary)
 	r.Get("/range", h.rangeSummary)
@@ -54,20 +59,88 @@ func (h *Handler) Routes(r chi.Router) {
 	h.exerciseRoutes(r)
 }
 
-// ---- meals ----
+// ---- foods (first-class items) ----
 
-func (h *Handler) createMeal(w http.ResponseWriter, r *http.Request) {
-	var m food.Meal
-	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+type addFoodsRequest struct {
+	Day   string          `json:"day"`
+	Slot  *string         `json:"slot"`
+	Items []food.MealItem `json:"items"`
+}
+
+func (h *Handler) addFoods(w http.ResponseWriter, r *http.Request) {
+	var req addFoodsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if err := h.svc.CreateMeal(r.Context(), &m); err != nil {
-		h.fail(w, "create meal", err)
+	meal, err := h.svc.AddFoods(r.Context(), req.Day, req.Slot, req.Items)
+	if err != nil {
+		h.fail(w, "add foods", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, m)
+	writeJSON(w, http.StatusCreated, meal)
 }
+
+// updateFoodRequest embeds the food fields flat alongside the target day/slot,
+// so editing a food and moving its slot is one request.
+type updateFoodRequest struct {
+	Day  string  `json:"day"`
+	Slot *string `json:"slot"`
+	food.MealItem
+}
+
+func (h *Handler) getFood(w http.ResponseWriter, r *http.Request) {
+	id, err := parseMealID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	it, err := h.svc.GetFood(r.Context(), id)
+	if err != nil {
+		h.fail(w, "get food", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, it)
+}
+
+func (h *Handler) updateFood(w http.ResponseWriter, r *http.Request) {
+	id, err := parseMealID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req updateFoodRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	req.MealItem.ID = id
+	if err := h.svc.UpdateFood(r.Context(), req.Day, req.Slot, &req.MealItem); err != nil {
+		h.fail(w, "update food", err)
+		return
+	}
+	updated, err := h.svc.GetFood(r.Context(), id)
+	if err != nil {
+		h.fail(w, "get food", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (h *Handler) deleteFood(w http.ResponseWriter, r *http.Request) {
+	id, err := parseMealID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.svc.DeleteFood(r.Context(), id); err != nil {
+		h.fail(w, "delete food", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- meals (containers) ----
 
 func (h *Handler) listMeals(w http.ResponseWriter, r *http.Request) {
 	day := r.URL.Query().Get("day")
@@ -98,30 +171,6 @@ func (h *Handler) getMeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, meal)
-}
-
-func (h *Handler) updateMeal(w http.ResponseWriter, r *http.Request) {
-	id, err := parseMealID(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	var m food.Meal
-	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-	m.ID = id
-	if err := h.svc.UpdateMeal(r.Context(), &m); err != nil {
-		h.fail(w, "update meal", err)
-		return
-	}
-	updated, err := h.svc.GetMeal(r.Context(), id)
-	if err != nil {
-		h.fail(w, "get meal", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, updated)
 }
 
 func (h *Handler) deleteMeal(w http.ResponseWriter, r *http.Request) {

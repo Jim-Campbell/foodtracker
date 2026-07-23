@@ -41,8 +41,11 @@ main { max-width: 480px; margin: 0 auto; padding: 14px 14px 190px; min-width: 0;
 h2 { font-size: 1.05rem; margin-bottom: 10px; }
 h3 { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin: 4px 0 6px; }
 /* slot header: label left, slot totals right, a notch larger than row subtitles */
-.slothead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.slothead { display: flex; align-items: baseline; gap: 8px; }
+.slothead h3 { margin-right: auto; }
 .slotsum { font-size: .88rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.slotact { font-size: 1rem; line-height: 1; padding: 0 2px; color: var(--muted); background: none; border: none; cursor: pointer; }
+.favsec { margin: 14px 0 4px; font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .muted { color: var(--muted); }
 .sm { font-size: .78rem; }
 .big { font-size: 1.7rem; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -167,7 +170,22 @@ textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid
 .irow-mid { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
 .gramsIn { width: 52px; padding: 6px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font-size: .85rem; }
 .irow-mid .s { white-space: nowrap; }
-.wholefrac { margin: 10px 0; padding-top: 8px; border-top: 1px dashed var(--line); }
+/* confirm-the-match row (item 4): which DB entry backed the numbers */
+.matchrow { margin: 4px 0 2px; font-size: .8rem; }
+.matchrow.loud { background: color-mix(in srgb, var(--amber) 10%, transparent); border-radius: 8px; padding: 5px 7px; }
+.mr-line { display: flex; align-items: center; gap: 7px; }
+.mname { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-act { margin-left: auto; display: flex; gap: 4px; flex-shrink: 0; }
+.dtbadge { font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 2px 6px; border-radius: 20px; color: #fff; background: var(--muted); white-space: nowrap; flex-shrink: 0; }
+.dtbadge.t1, .dtbadge.t2 { background: var(--green); }
+.dtbadge.t3 { background: var(--amber); }
+.dtbadge.t4 { background: var(--red); }
+.chg { color: var(--accent); font-weight: 600; }
+.wchip { border: 1px solid var(--line); border-radius: 20px; padding: 1px 7px; font-size: .78rem; background: var(--bg); color: var(--muted); cursor: pointer; }
+.wchip.on { background: var(--green); color: #fff; border-color: var(--green); }
+.altlist { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
+.altopt { display: flex; align-items: center; gap: 7px; text-align: left; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: .8rem; color: var(--text); cursor: pointer; }
+.altopt:hover { border-color: var(--accent); }
 /* meal photo in the detail dialog: cropped banner, tap to see the full shot */
 .dphoto { width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; margin: 8px 0 10px; cursor: pointer; display: block; }
 .dphoto.full { max-height: none; object-fit: contain; }
@@ -562,12 +580,18 @@ function mealFat(m) {
 function macroSummary(cal, p, c, f) {
   return `${cal} cal · ${p}g protein · ${c}g carbs · ${f}g fat`;
 }
-function mealRow(m) {
-  // onerror: a photo that can't load (misconfigured R2 public URL, deleted
-  // object) hides itself instead of showing the browser's broken-image icon.
-  const thumb = m.photo_url ? `<img class="thumb" src="${esc(m.photo_url)}" onerror="this.remove()">` : '';
-  const star = matchingFavorite(m.items) ? ' <span title="Favorited">★</span>' : '';
-  return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}${star}</div><div class="s">${macroSummary(mealCalories(m), mealProtein(m), mealCarbs(m), mealFat(m))}</div></div></div>`;
+// foodRow: one first-class food inside a slot, tappable to edit. A food is
+// starred when it matches a saved Food favorite.
+function foodRow(it) {
+  // onerror: a photo that can't load (misconfigured R2 URL, deleted object)
+  // hides itself instead of showing the browser's broken-image icon.
+  const thumb = it.photo_url ? `<img class="thumb" src="${esc(it.photo_url)}" onerror="this.remove()">` : '';
+  const star = matchingFavorite([it]) ? ' <span title="Favorited">★</span>' : '';
+  const cal = Math.round(it.calories * it.fraction_pct / 100);
+  const p = Math.round(it.protein_mg * it.fraction_pct / 100 / 1000);
+  const c = Math.round(it.carbs_mg * it.fraction_pct / 100 / 1000);
+  const f = Math.round(it.fat_mg * it.fraction_pct / 100 / 1000);
+  return `<div class="row" onclick="editFood(${it.id})">${thumb}<div class="grow"><div class="m">${esc(it.name)}${star}</div><div class="s">${macroSummary(cal, p, c, f)}</div></div></div>`;
 }
 // anomalyLine: the outlier attribution (item 6) as one expandable line under
 // the hero — a quiet flag on an off day, nothing at all on a normal one. Tap to
@@ -604,15 +628,25 @@ function renderToday(m) {
     ${trainingCardHTML()}
     ${hasAny
       ? order.map(([key, label]) => {
-        const slotMeals = groups[key];
-        if (!slotMeals.length) return '';
-        const cal = slotMeals.reduce((s, x) => s + mealCalories(x), 0);
-        const p = slotMeals.reduce((s, x) => s + mealProtein(x), 0);
-        const c = slotMeals.reduce((s, x) => s + mealCarbs(x), 0);
-        const f = slotMeals.reduce((s, x) => s + mealFat(x), 0);
-        return `<div class="card"><div class="slothead"><h3>${label}</h3><span class="slotsum">${macroSummary(cal, p, c, f)}</span></div>${slotMeals.map(mealRow).join('')}</div>`;
+        const meal = (groups[key] || [])[0];
+        if (!meal || !(meal.items || []).length) return '';
+        const cal = mealCalories(meal), p = mealProtein(meal), c = mealCarbs(meal), f = mealFat(meal);
+        // Favorite the meal only when it's an actual collection; single foods
+        // are favorited from their own edit sheet.
+        const favMeal = meal.items.length > 1 && matchingFavorite(meal.items);
+        const favBtn = meal.items.length > 1
+          ? (favMeal ? '<span class="slotact" title="Meal favorited">★</span>'
+            : `<button class="slotact lk" onclick="favoriteMeal(${meal.id})" title="Save this meal to favorites">☆</button>`)
+          : '';
+        return `<div class="card">
+          <div class="slothead"><h3>${label}</h3>
+            <span class="slotsum">${macroSummary(cal, p, c, f)}</span>
+            ${favBtn}<button class="slotact lk" onclick="clearMealConfirm(${meal.id})" title="Clear ${label}">🗑</button>
+          </div>
+          ${meal.items.map(foodRow).join('')}
+        </div>`;
       }).join('')
-      : '<div class="empty">No meals logged yet</div>'}
+      : '<div class="empty">No food logged yet</div>'}
   `;
   if (!S.exercise) loadExercise().then(render).catch(e => toast('Error: ' + e.message));
 }
@@ -1125,17 +1159,23 @@ function favTotals(items) {
     return t;
   }, { cal: 0, p: 0, c: 0, f: 0 });
 }
+function favRow(f) {
+  const t = favTotals(f.items);
+  return `<div class="row" onclick="logFavorite(${f.id})">
+    <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${macroSummary(t.cal, t.p, t.c, t.f)}</div></div>
+    <button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();renameFavorite(${f.id})" title="Rename favorite">✏️</button>
+    <button class="lk" onclick="event.stopPropagation();removeFavorite(${f.id})" title="Delete favorite">✕</button>
+  </div>`;
+}
 function renderFavorites() {
-  const rows = S.favorites.map(f => {
-    const t = favTotals(f.items);
-    return `<div class="row" onclick="logFavorite(${f.id})">
-      <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${macroSummary(t.cal, t.p, t.c, t.f)}</div></div>
-      <button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();renameFavorite(${f.id})" title="Rename favorite">✏️</button>
-      <button class="lk" onclick="event.stopPropagation();removeFavorite(${f.id})" title="Delete favorite">✕</button>
-    </div>`;
-  }).join('');
-  openDialog(`<h2>Favorites</h2>
-    ${rows || '<div class="empty">No favorites yet — open a meal and tap ☆ Favorite.</div>'}
+  const kind = k => S.favorites.filter(f => (f.kind || (f.items.length === 1 ? 'food' : 'meal')) === k);
+  const foods = kind('food'), meals = kind('meal');
+  const section = (label, list) => list.length
+    ? `<h3 class="favsec">${label}</h3>${list.map(favRow).join('')}` : '';
+  const body = (foods.length || meals.length)
+    ? section('Meals', meals) + section('Foods', foods)
+    : '<div class="empty">No favorites yet — ☆ a food from its edit sheet, or ☆ a whole meal from the day view.</div>';
+  openDialog(`<h2>Favorites</h2>${body}
     <div class="dlg-actions"><button class="btn" onclick="closeDialog()">Close</button></div>`);
 }
 // A meal "is favorited" when a favorite with the same item content exists
@@ -1151,11 +1191,10 @@ function logFavorite(id) {
   const f = S.favorites.find(x => x.id === id);
   if (!f) return;
   DRAFT = {
-    mode: 'new', id: null, day: S.day, slot: slotDefault(),
-    description: f.name, input_kind: 'manual',
-    photo_key: null, photo_url: null, ai_model: null, ai_raw: null,
+    mode: 'create', id: null, day: S.day, slot: slotDefault(),
+    input_kind: 'manual', photo_key: null, photo_url: null, ai_model: null, ai_raw: null,
     notes: '', notesShown: false,
-    items: f.items.map(({ id, meal_id, ...rest }) => ({ ...rest })),
+    items: f.items.map(cleanItem),
   };
   renderDraftDialog();
 }
@@ -1201,20 +1240,28 @@ function openDraftDialog(draft, meta) {
   };
   renderDraftDialog();
 }
-async function editMeal(id) {
-  try {
-    const meal = await api('/meals/' + id);
-    DRAFT = {
-      mode: 'edit', id: meal.id,
-      items: (meal.items || []).map((it, idx) => ({ ...it, position: idx })),
-      notes: '', notesShown: false,
-      ai_model: meal.ai_model || null, ai_raw: meal.ai_raw || null,
-      slot: meal.slot || 'snack', day: meal.day,
-      description: meal.description || '', input_kind: meal.input_kind || 'manual',
-      photo_key: meal.photo_key || null, photo_url: meal.photo_url || null,
-    };
-    renderDraftDialog();
-  } catch (e) { toast('Error: ' + e.message); }
+// findFood locates a food (and its containing meal) in the loaded day summary.
+function findFood(id) {
+  for (const m of (S.summary && S.summary.meals) || []) {
+    for (const it of m.items || []) if (it.id === id) return { it, meal: m };
+  }
+  return null;
+}
+// editFood opens the single-food edit sheet. Editing is per-food now; the slot
+// picker moves the food to another meal.
+function editFood(id) {
+  const found = findFood(id);
+  if (!found) { toast('Food not found'); return; }
+  const { it, meal } = found;
+  DRAFT = {
+    mode: 'editFood', id,
+    items: [{ ...it, position: 0 }],
+    notes: '', notesShown: false,
+    slot: meal.slot || 'snack', day: meal.day,
+    input_kind: it.input_kind || 'manual', ai_model: it.ai_model || null, ai_raw: it.ai_raw || null,
+    photo_key: it.photo_key || null, photo_url: it.photo_url || null,
+  };
+  renderDraftDialog();
 }
 function renderDraftDialog() { openDialog(draftDialogHTML()); $('#dlg').classList.add('wide'); }
 
@@ -1242,17 +1289,12 @@ function fmtQty(pct) {
   return `${whole || !frac ? whole : ''}${frac}×`;
 }
 function qtyStepper(it, idx) {
-  // Whole-meal control (idx === -1) shows the shared value if uniform, else "Mixed";
-  // its +/- step every item. Per-item control shows/steps that one item.
-  const vals = DRAFT.items.map(i => i.fraction_pct);
-  const cur = idx === -1 ? (vals.every(v => v === vals[0]) ? (vals[0] ?? 100) : null) : it.fraction_pct;
-  const stepFn = d => idx === -1 ? `stepAllFraction(${d})` : `stepItemFraction(${idx},${d})`;
-  const atMin = idx === -1 ? vals.every(v => v <= QTY_MIN) : cur <= QTY_MIN;
-  const atMax = idx === -1 ? vals.every(v => v >= QTY_MAX) : cur >= QTY_MAX;
+  // Per-food portion control — steps just this food's fraction.
+  const cur = it.fraction_pct;
   return `<div class="qty">
-    <button onclick="${stepFn(-1)}" ${atMin ? 'disabled' : ''} title="Less">−</button>
-    <span class="val">${cur === null ? 'Mixed' : fmtQty(cur)}</span>
-    <button onclick="${stepFn(1)}" ${atMax ? 'disabled' : ''} title="More">+</button>
+    <button onclick="stepItemFraction(${idx},-1)" ${cur <= QTY_MIN ? 'disabled' : ''} title="Less">−</button>
+    <span class="val">${fmtQty(cur)}</span>
+    <button onclick="stepItemFraction(${idx},1)" ${cur >= QTY_MAX ? 'disabled' : ''} title="More">+</button>
   </div>`;
 }
 function draftItemRow(it, idx) {
@@ -1265,17 +1307,77 @@ function draftItemRow(it, idx) {
         <div class="m">${esc(it.name)}</div>
         <div class="s">${esc(it.quantity || '')}</div>
       </div>
-      <button class="lk" onclick="removeDraftItem(${idx})" title="Remove">✕</button>
+      ${DRAFT.mode === 'editFood' ? '' : `<button class="lk" onclick="removeDraftItem(${idx})" title="Remove">✕</button>`}
     </div>
     <div class="irow-mid">
       <input type="number" class="gramsIn" value="${it.grams || ''}" placeholder="g" onchange="setDraftGrams(${idx},this.value)">
       <span class="s">${eatenCal} cal · ${macro(eaten('protein_mg'), 'protein', 'P')} · ${macro(eaten('carbs_mg'), 'carbs', 'C')} · ${macro(eaten('fat_mg'), 'fat', 'F')}</span>
     </div>
+    ${matchRow(it, idx)}
     ${qtyStepper(it, idx)}
   </div>`;
 }
+// matchRow (item 4): shows which database entry backed this food's numbers, with
+// one-tap alternatives and a weighed-portion toggle. Never blocks the save.
+// Tiers 1–2 (barcode/branded/Foundation/SR) confirm quietly; tiers 3–4
+// (Survey/web/estimate) are shown loud so a shaky match gets a second look.
+const DT_LABEL = { usda: '', off: 'Barcode', label: 'Label', web: 'Web', ai: 'Estimate', manual: 'Manual' };
+function tierFor(dt) {
+  if (!dt) return 2;
+  if (/survey/i.test(dt)) return 3;
+  if (/branded/i.test(dt)) return 1;
+  return 2; // Foundation / SR Legacy
+}
+function matchRow(it, idx) {
+  const dt = it.fdc_data_type || DT_LABEL[it.source] || '';
+  if (!dt && !it.match_description) return '';
+  const tier = it.resolution_tier || (it.source === 'ai' ? 4 : 2);
+  const loud = tier >= 3;
+  const alts = it.alternatives || [];
+  const nm = it.match_description ? `<span class="mname">${esc(it.match_description)}</span>` : '';
+  const swap = alts.length ? `<button class="lk chg" onclick="toggleAlts(${idx})" title="Pick a different match">⇄</button>` : '';
+  const weighed = it.portion_source === 'weighed';
+  const wchip = `<button class="wchip ${weighed ? 'on' : ''}" onclick="toggleWeighed(${idx})" title="Mark this portion as weighed on a scale">⚖</button>`;
+  const altList = it._showAlts && alts.length
+    ? `<div class="altlist">${alts.map((a, ai) => `<button class="altopt" onclick="swapMatch(${idx},${ai})"><span class="dtbadge t${tierFor(a.fdc_data_type)}">${esc(a.fdc_data_type || '')}</span>${esc(a.description)}</button>`).join('')}</div>`
+    : '';
+  return `<div class="matchrow${loud ? ' loud' : ''}">
+    <div class="mr-line"><span class="dtbadge t${tier}">${esc(dt || 'matched')}</span>${nm}<span class="mr-act">${swap}${wchip}</span></div>
+    ${altList}
+  </div>`;
+}
+function toggleAlts(idx) { DRAFT.items[idx]._showAlts = !DRAFT.items[idx]._showAlts; renderDraftDialog(); }
+function toggleWeighed(idx) {
+  const it = DRAFT.items[idx];
+  const base = (it.source === 'off' || it.source === 'label') ? 'package_unit' : 'estimated';
+  it.portion_source = it.portion_source === 'weighed' ? base : 'weighed';
+  renderDraftDialog();
+}
+// swapMatch replaces a food's backing entry with a chosen alternative and
+// recomputes its full-portion nutrition from that entry's per-100g × grams —
+// no re-parse. Provenance (source_ref, data type, tier) updates too, so the
+// correction is what gets saved and accreted.
+function swapMatch(idx, altIdx) {
+  const it = DRAFT.items[idx];
+  const alt = (it.alternatives || [])[altIdx];
+  if (!alt) return;
+  const g = it.grams || 100;
+  const per = alt.per_100g || {};
+  it.calories = Math.round((per.calories || 0) * g / 100);
+  for (const k of ['protein_mg', 'carbs_mg', 'fat_mg', 'fiber_mg', 'sat_fat_mg', 'sugar_mg', 'sodium_mg']) {
+    it[k] = Math.round((per[k] || 0) * g / 100);
+  }
+  it.source_ref = String(alt.fdc_id);
+  it.fdc_data_type = alt.fdc_data_type;
+  it.resolution_tier = tierFor(alt.fdc_data_type);
+  it.match_description = alt.description;
+  it._showAlts = false;
+  renderDraftDialog();
+}
+// cleanItem strips row identity and the draft-only confirm-the-match fields
+// before an item is snapshotted into a favorite or re-logged.
+function cleanItem({ id, meal_id, match_description, alternatives, alternative_fdc_ids, _showAlts, ...rest }) { return rest; }
 function stepItemFraction(idx, dir) { const it = DRAFT.items[idx]; it.fraction_pct = nextStop(it.fraction_pct, dir); renderDraftDialog(); }
-function stepAllFraction(dir) { DRAFT.items.forEach(it => it.fraction_pct = nextStop(it.fraction_pct, dir)); renderDraftDialog(); }
 function removeDraftItem(idx) { DRAFT.items.splice(idx, 1); DRAFT.items.forEach((it, i) => it.position = i); renderDraftDialog(); }
 function setDraftGrams(idx, val) {
   const it = DRAFT.items[idx];
@@ -1292,34 +1394,32 @@ function setDraftGrams(idx, val) {
 }
 function draftDialogHTML() {
   const totals = itemTotals(DRAFT.items);
-  const title = DRAFT.mode === 'edit' ? 'Edit meal' : 'Confirm meal';
+  const editing = DRAFT.mode === 'editFood';
+  const title = editing ? 'Edit food' : (DRAFT.items.length > 1 ? 'Confirm foods' : 'Confirm food');
+  const slotLabel = editing ? 'Slot' : (DRAFT.items.length > 1 ? 'Add these foods to' : 'Add to');
   return `<h2>${title}</h2>
     ${DRAFT.photo_url ? `<img class="dphoto" src="${esc(DRAFT.photo_url)}" onerror="this.remove()" onclick="this.classList.toggle('full')" title="Tap to expand">` : ''}
     ${DRAFT.notes && DRAFT.notesShown ? `<div class="hint ${DRAFT.notesOpen ? 'open' : ''}" onclick="DRAFT.notesOpen=!DRAFT.notesOpen;renderDraftDialog()"><span class="hint-txt">💡 ${esc(DRAFT.notes)}</span><button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();DRAFT.notesShown=false;renderDraftDialog()">✕</button></div>` : ''}
-    <div class="itemlist">${DRAFT.items.map((it, idx) => draftItemRow(it, idx)).join('') || '<div class="empty">No items</div>'}</div>
-    <div class="wholefrac">
-      <span class="muted sm">Whole meal:</span>
-      ${qtyStepper(null, -1)}
-    </div>
-    <label class="f">Meal</label>
+    <div class="itemlist">${DRAFT.items.map((it, idx) => draftItemRow(it, idx)).join('') || '<div class="empty">No foods</div>'}</div>
+    <label class="f">${slotLabel}</label>
     <div class="seg">
       ${['breakfast', 'lunch', 'dinner', 'snack'].map(sl => `<button class="${DRAFT.slot === sl ? 'on' : ''}" onclick="DRAFT.slot='${sl}';renderDraftDialog()">${cap(sl)}</button>`).join('')}
     </div>
     <label class="f">Day</label>
     <input type="date" value="${DRAFT.day}" max="${today()}" onchange="DRAFT.day=this.value">
-    ${DRAFT.mode === 'edit' ? (() => {
+    ${editing ? (() => {
       const fav = matchingFavorite(DRAFT.items);
       return `<div class="dlg-actions" style="margin-top:12px">
       <button class="btn" onclick="duplicateDraft()">⧉ Duplicate</button>
       ${fav
         ? `<button class="btn" style="background:var(--chip-on);color:#fff" onclick="unfavoriteFromDialog(${fav.id})">★ Favorited</button>`
-        : `<button class="btn" onclick="saveFavorite()">☆ Favorite</button>`}
+        : `<button class="btn" onclick="saveFavorite()">☆ Favorite food</button>`}
     </div>`;
     })() : ''}
     <div class="dfoot">
       <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein}g protein · ${totals.carbs}g carbs · ${totals.fat}g fat</div>
       <div class="dlg-actions">
-        ${DRAFT.mode === 'edit' ? `<button class="btn danger" onclick="deleteMealConfirm(${DRAFT.id})">Delete</button>` : ''}
+        ${editing ? `<button class="btn danger" onclick="deleteFoodConfirm(${DRAFT.id})">Delete</button>` : ''}
         <button class="btn ghost" onclick="closeDialog()">Cancel</button>
         <button class="btn primary" onclick="saveDraft()">Save</button>
       </div>
@@ -1327,26 +1427,43 @@ function draftDialogHTML() {
 }
 function duplicateDraft() {
   DRAFT = {
-    mode: 'new', id: null, day: S.day, slot: slotDefault(),
-    description: DRAFT.description, input_kind: 'manual',
-    photo_key: null, photo_url: null, ai_model: null, ai_raw: null,
+    mode: 'create', id: null, day: S.day, slot: slotDefault(),
+    input_kind: 'manual', photo_key: null, photo_url: null, ai_model: null, ai_raw: null,
     notes: '', notesShown: false,
-    items: DRAFT.items.map(({ id, meal_id, ...rest }) => ({ ...rest })),
+    items: DRAFT.items.map(cleanItem),
   };
   renderDraftDialog();
   toast('Duplicated — Save to log it');
 }
+// saveFavorite saves the food(s) in the current draft as a favorite. One food
+// is a Food favorite; more than one is a Meal favorite.
 async function saveFavorite() {
-  const def = (DRAFT.description || DRAFT.items.map(i => i.name).join(', ')).slice(0, 60);
+  const def = DRAFT.items.map(i => i.name).join(', ').slice(0, 60);
   const name = prompt('Favorite name:', def);
   if (!name || !name.trim()) return;
+  const kind = DRAFT.items.length === 1 ? 'food' : 'meal';
   try {
-    const items = DRAFT.items.map(({ id, meal_id, ...rest }) => ({ ...rest }));
-    const fav = await api('/favorites', { method: 'POST', body: { name: name.trim(), items } });
+    const items = DRAFT.items.map(cleanItem);
+    const fav = await api('/favorites', { method: 'POST', body: { name: name.trim(), kind, items } });
     S.favorites = (S.favorites || []).filter(f => f.id !== fav.id).concat(fav)
       .sort((a, b) => a.name.localeCompare(b.name));
     toast('Saved to favorites ★');
     renderDraftDialog();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+// favoriteMeal saves a whole slot's foods as a Meal favorite (from the day view).
+async function favoriteMeal(mealId) {
+  const meal = ((S.summary && S.summary.meals) || []).find(m => m.id === mealId);
+  if (!meal) return;
+  const def = meal.items.map(i => i.name).join(', ').slice(0, 60);
+  const name = prompt('Meal favorite name:', def);
+  if (!name || !name.trim()) return;
+  try {
+    const items = meal.items.map(cleanItem);
+    const fav = await api('/favorites', { method: 'POST', body: { name: name.trim(), kind: 'meal', items } });
+    S.favorites = (S.favorites || []).filter(f => f.id !== fav.id).concat(fav)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    toast('Meal saved to favorites ★'); render();
   } catch (e) { toast('Error: ' + e.message); }
 }
 async function unfavoriteFromDialog(id) {
@@ -1358,27 +1475,43 @@ async function unfavoriteFromDialog(id) {
   } catch (e) { toast('Error: ' + e.message); }
 }
 async function saveDraft() {
-  if (!DRAFT.items.length) { toast('Add at least one item'); return; }
-  const body = {
-    day: DRAFT.day, slot: DRAFT.slot, description: DRAFT.description, input_kind: DRAFT.input_kind,
-    photo_key: DRAFT.photo_key, photo_url: DRAFT.photo_url, ai_model: DRAFT.ai_model, ai_raw: DRAFT.ai_raw,
-    items: DRAFT.items,
-  };
+  if (!DRAFT.items.length) { toast('Add at least one food'); return; }
+  const day = DRAFT.day, slot = DRAFT.slot;
   try {
-    if (DRAFT.mode === 'edit') await api('/meals/' + DRAFT.id, { method: 'PUT', body });
-    else await api('/meals', { method: 'POST', body });
+    if (DRAFT.mode === 'editFood') {
+      await api('/foods/' + DRAFT.id, { method: 'PUT', body: { day, slot, ...DRAFT.items[0] } });
+    } else {
+      // Logging metadata lives on each food now — carry the draft's onto them.
+      const items = DRAFT.items.map(it => ({
+        ...it,
+        input_kind: it.input_kind || DRAFT.input_kind || 'manual',
+        photo_key: it.photo_key || DRAFT.photo_key || null,
+        photo_url: it.photo_url || DRAFT.photo_url || null,
+        ai_model: it.ai_model || DRAFT.ai_model || null,
+        ai_raw: it.ai_raw || DRAFT.ai_raw || null,
+      }));
+      await api('/foods', { method: 'POST', body: { day, slot, items } });
+    }
     closeDialog(); toast('Saved'); DRAFT = null;
     S.trendRows = null;
-    S.day = body.day; // follow the meal: an entry assigned to another day shows up there
+    S.day = day; // follow the food if it was filed to another day
     await loadDay(S.day); render();
   } catch (e) { toast('Error: ' + e.message); }
 }
-function deleteMealConfirm(id) { if (confirm('Delete this meal?')) deleteMeal(id); }
-async function deleteMeal(id) {
+function deleteFoodConfirm(id) { if (confirm('Delete this food?')) deleteFood(id); }
+async function deleteFood(id) {
   try {
-    await api('/meals/' + id, { method: 'DELETE' });
+    await api('/foods/' + id, { method: 'DELETE' });
     closeDialog(); toast('Deleted'); DRAFT = null;
     S.trendRows = null;
+    await loadDay(S.day); render();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+function clearMealConfirm(id) { if (confirm('Clear this whole meal?')) clearMeal(id); }
+async function clearMeal(id) {
+  try {
+    await api('/meals/' + id, { method: 'DELETE' });
+    toast('Cleared'); S.trendRows = null;
     await loadDay(S.day); render();
   } catch (e) { toast('Error: ' + e.message); }
 }

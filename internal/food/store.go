@@ -5,11 +5,16 @@ import "context"
 // Store is the persistence interface the service depends on. internal/db
 // implements it with pgx.
 type Store interface {
-	CreateMeal(ctx context.Context, m *Meal) error
+	// AddFoods appends foods to the (day, slot) container, creating it if
+	// needed, and returns the whole container. The unit of logging is the food.
+	AddFoods(ctx context.Context, day string, slot *string, items []MealItem) (*Meal, error)
 	GetMeal(ctx context.Context, id int64) (*Meal, error)
 	ListMealsByDay(ctx context.Context, day string) ([]Meal, error)
-	UpdateMeal(ctx context.Context, m *Meal) error
-	DeleteMeal(ctx context.Context, id int64) error
+	DeleteMeal(ctx context.Context, id int64) error // clears the whole (day, slot) container
+
+	GetFood(ctx context.Context, id int64) (*MealItem, error)
+	UpdateFood(ctx context.Context, day string, slot *string, food *MealItem) error // updates + re-parents to (day, slot)
+	DeleteFood(ctx context.Context, id int64) error
 
 	UpsertWeight(ctx context.Context, w *Weight) error
 	ListWeights(ctx context.Context, start, end string) ([]Weight, error)
