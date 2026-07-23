@@ -132,6 +132,9 @@ input[type=text], input[type=number], input[type=date] {
 .ti-hdr.tdy { color: var(--text); font-weight: 600; }
 .ti-box { width: 26px; height: 26px; border: 1.5px solid var(--line); border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .ti-box svg { display: block; }
+/* marker for a day whose session carries a note — sits on the box's top-right
+   corner with a card-colored ring so it separates from the border. */
+.ti-note { position: absolute; top: -3px; right: -3px; width: 6px; height: 6px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--card); }
 .ti-dot { width: 10px; height: 10px; border-radius: 50%; }
 .ti-circles { display: flex; gap: 2px; align-items: center; margin-left: 7px; }
 .ti-circle { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid currentColor; }
@@ -649,7 +652,9 @@ function trainRowHTML(t, days) {
     const ds = byDay[d];
     if (ds) {
       const inner = t.key === 'cardio' ? cardioIconHTML(ds[0].activity) : `<span class="ti-dot" style="background:var(${t.color})"></span>`;
-      return `<div class="ti-box" onclick="event.stopPropagation();editExerciseSession(${ds[0].id})">${inner}</div>`;
+      // a session with a note gets a small marker in the box's top-right corner
+      const noted = ds.some(s => s.note && s.note.trim()) ? `<span class="ti-note" style="background:var(${t.color})"></span>` : '';
+      return `<div class="ti-box" onclick="event.stopPropagation();editExerciseSession(${ds[0].id})">${inner}${noted}</div>`;
     }
     return `<div class="ti-box" onclick="event.stopPropagation();quickLogSheet('${t.key}')"></div>`;
   }).join('');
