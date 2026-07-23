@@ -77,12 +77,14 @@ func insertMealItems(ctx context.Context, tx pgx.Tx, mealID int64, items []food.
 			INSERT INTO meal_items (
 				meal_id, position, name, brand, quantity, grams, fraction_pct,
 				calories, protein_mg, carbs_mg, fat_mg, fiber_mg, sat_fat_mg, sugar_mg, sodium_mg,
-				micros, tier, tier_reason, source, source_ref, confidence
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+				micros, tier, tier_reason, source, source_ref, confidence,
+				fdc_id, fdc_data_type, resolution_tier, portion_source, tier_source
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
 			RETURNING id`,
 			mealID, it.Position, it.Name, it.Brand, it.Quantity, it.Grams, it.FractionPct,
 			it.Calories, it.ProteinMg, it.CarbsMg, it.FatMg, it.FiberMg, it.SatFatMg, it.SugarMg, it.SodiumMg,
-			nullableRaw(it.Micros), it.Tier, it.TierReason, it.Source, it.SourceRef, it.Confidence).
+			nullableRaw(it.Micros), it.Tier, it.TierReason, it.Source, it.SourceRef, it.Confidence,
+			it.FDCID, it.FDCDataType, it.ResolutionTier, it.PortionSource, it.TierSource).
 			Scan(&it.ID)
 		if err != nil {
 			return fmt.Errorf("insert meal item %d: %w", i, err)
@@ -160,7 +162,8 @@ func (d *DB) itemsForMeals(ctx context.Context, mealIDs []int64) (map[int64][]fo
 	rows, err := d.pool.Query(ctx, `
 		SELECT id, meal_id, position, name, brand, quantity, grams, fraction_pct,
 		       calories, protein_mg, carbs_mg, fat_mg, fiber_mg, sat_fat_mg, sugar_mg, sodium_mg,
-		       micros, tier, tier_reason, source, source_ref, confidence
+		       micros, tier, tier_reason, source, source_ref, confidence,
+		       fdc_id, fdc_data_type, resolution_tier, portion_source, tier_source
 		FROM meal_items WHERE meal_id = ANY($1) ORDER BY meal_id, position`, mealIDs)
 	if err != nil {
 		return nil, fmt.Errorf("query meal items: %w", err)
@@ -173,7 +176,8 @@ func (d *DB) itemsForMeals(ctx context.Context, mealIDs []int64) (map[int64][]fo
 		var micros []byte
 		if err := rows.Scan(&it.ID, &it.MealID, &it.Position, &it.Name, &it.Brand, &it.Quantity, &it.Grams, &it.FractionPct,
 			&it.Calories, &it.ProteinMg, &it.CarbsMg, &it.FatMg, &it.FiberMg, &it.SatFatMg, &it.SugarMg, &it.SodiumMg,
-			&micros, &it.Tier, &it.TierReason, &it.Source, &it.SourceRef, &it.Confidence); err != nil {
+			&micros, &it.Tier, &it.TierReason, &it.Source, &it.SourceRef, &it.Confidence,
+			&it.FDCID, &it.FDCDataType, &it.ResolutionTier, &it.PortionSource, &it.TierSource); err != nil {
 			return nil, fmt.Errorf("scan meal item: %w", err)
 		}
 		if micros != nil {
@@ -322,6 +326,82 @@ func (d *DB) DeleteFavorite(ctx context.Context, id int64) error {
 	return nil
 }
 
+// ---- canonical foods (item 3 accretion cache) ----
+
+// UpsertCanonical writes a canonical food by normalized name. On conflict it
+// overwrites the resolved numbers and provenance (so a correction propagates to
+// future logs) and bumps times_logged; protected/protected_reason are left
+// untouched on update so a manual "protected" mark survives re-logging.
+func (d *DB) UpsertCanonical(ctx context.Context, c *food.CanonicalFood) error {
+	err := d.pool.QueryRow(ctx, `
+		INSERT INTO canonical_foods (
+			normalized_name, display_name, source, source_ref, fdc_id, fdc_data_type, resolution_tier,
+			cal_per_100g, protein_mg_per_100g, carbs_mg_per_100g, fat_mg_per_100g,
+			fiber_mg_per_100g, sat_fat_mg_per_100g, sugar_mg_per_100g, sodium_mg_per_100g,
+			default_grams, tier, tier_reason, tier_source
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+		ON CONFLICT (normalized_name) DO UPDATE SET
+			display_name = EXCLUDED.display_name, source = EXCLUDED.source, source_ref = EXCLUDED.source_ref,
+			fdc_id = EXCLUDED.fdc_id, fdc_data_type = EXCLUDED.fdc_data_type, resolution_tier = EXCLUDED.resolution_tier,
+			cal_per_100g = EXCLUDED.cal_per_100g, protein_mg_per_100g = EXCLUDED.protein_mg_per_100g,
+			carbs_mg_per_100g = EXCLUDED.carbs_mg_per_100g, fat_mg_per_100g = EXCLUDED.fat_mg_per_100g,
+			fiber_mg_per_100g = EXCLUDED.fiber_mg_per_100g, sat_fat_mg_per_100g = EXCLUDED.sat_fat_mg_per_100g,
+			sugar_mg_per_100g = EXCLUDED.sugar_mg_per_100g, sodium_mg_per_100g = EXCLUDED.sodium_mg_per_100g,
+			default_grams = EXCLUDED.default_grams, tier = EXCLUDED.tier, tier_reason = EXCLUDED.tier_reason,
+			tier_source = EXCLUDED.tier_source, times_logged = canonical_foods.times_logged + 1, updated_at = NOW()
+		RETURNING id, times_logged`,
+		c.NormalizedName, c.DisplayName, c.Source, c.SourceRef, c.FDCID, c.FDCDataType, c.ResolutionTier,
+		c.Per100g.Calories, c.Per100g.ProteinMg, c.Per100g.CarbsMg, c.Per100g.FatMg,
+		c.Per100g.FiberMg, c.Per100g.SatFatMg, c.Per100g.SugarMg, c.Per100g.SodiumMg,
+		c.DefaultGrams, c.Tier, c.TierReason, c.TierSource).
+		Scan(&c.ID, &c.TimesLogged)
+	if err != nil {
+		return fmt.Errorf("upsert canonical: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) LookupCanonical(ctx context.Context, normalizedName string) (*food.CanonicalFood, error) {
+	rows, err := d.queryCanonical(ctx, "normalized_name = $1", []any{normalizedName})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
+func (d *DB) ListAllCanonical(ctx context.Context) ([]food.CanonicalFood, error) {
+	return d.queryCanonical(ctx, "TRUE", nil)
+}
+
+func (d *DB) queryCanonical(ctx context.Context, where string, args []any) ([]food.CanonicalFood, error) {
+	rows, err := d.pool.Query(ctx, fmt.Sprintf(`
+		SELECT id, normalized_name, display_name, source, source_ref, fdc_id, fdc_data_type, resolution_tier,
+		       cal_per_100g, protein_mg_per_100g, carbs_mg_per_100g, fat_mg_per_100g,
+		       fiber_mg_per_100g, sat_fat_mg_per_100g, sugar_mg_per_100g, sodium_mg_per_100g,
+		       default_grams, tier, tier_reason, tier_source, protected, protected_reason, times_logged, updated_at
+		FROM canonical_foods WHERE %s ORDER BY normalized_name`, where), args...)
+	if err != nil {
+		return nil, fmt.Errorf("query canonical: %w", err)
+	}
+	defer rows.Close()
+
+	var out []food.CanonicalFood
+	for rows.Next() {
+		var c food.CanonicalFood
+		if err := rows.Scan(&c.ID, &c.NormalizedName, &c.DisplayName, &c.Source, &c.SourceRef, &c.FDCID, &c.FDCDataType, &c.ResolutionTier,
+			&c.Per100g.Calories, &c.Per100g.ProteinMg, &c.Per100g.CarbsMg, &c.Per100g.FatMg,
+			&c.Per100g.FiberMg, &c.Per100g.SatFatMg, &c.Per100g.SugarMg, &c.Per100g.SodiumMg,
+			&c.DefaultGrams, &c.Tier, &c.TierReason, &c.TierSource, &c.Protected, &c.ProtectedReason, &c.TimesLogged, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan canonical: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ---- weights ----
 
 func (d *DB) UpsertWeight(ctx context.Context, w *food.Weight) error {
@@ -396,12 +476,12 @@ func (d *DB) DeleteWeight(ctx context.Context, day string) error {
 func (d *DB) GetSettings(ctx context.Context) (*food.Settings, error) {
 	s := &food.Settings{}
 	err := d.pool.QueryRow(ctx, `
-		SELECT calorie_target, protein_target_mg, weight_target_g,
+		SELECT calorie_target, protein_target_mg, sat_fat_target_mg, weight_target_g,
 		       cardio_weekly_target, strength_weekly_target, yoga_weekly_target, meditation_weekly_days,
 		       pt_weekly_days,
 		       updated_at
 		FROM settings WHERE id = 1`).
-		Scan(&s.CalorieTarget, &s.ProteinTargetMg, &s.WeightTargetG,
+		Scan(&s.CalorieTarget, &s.ProteinTargetMg, &s.SatFatTargetMg, &s.WeightTargetG,
 			&s.CardioWeeklyTarget, &s.StrengthWeeklyTarget, &s.YogaWeeklyTarget, &s.MeditationWeeklyDays,
 			&s.PTWeeklyDays,
 			&s.UpdatedAt)
@@ -413,12 +493,12 @@ func (d *DB) GetSettings(ctx context.Context) (*food.Settings, error) {
 
 func (d *DB) UpdateSettings(ctx context.Context, s *food.Settings) error {
 	_, err := d.pool.Exec(ctx, `
-		UPDATE settings SET calorie_target = $1, protein_target_mg = $2, weight_target_g = $3,
-		    cardio_weekly_target = $4, strength_weekly_target = $5, yoga_weekly_target = $6, meditation_weekly_days = $7,
-		    pt_weekly_days = $8,
+		UPDATE settings SET calorie_target = $1, protein_target_mg = $2, sat_fat_target_mg = $3, weight_target_g = $4,
+		    cardio_weekly_target = $5, strength_weekly_target = $6, yoga_weekly_target = $7, meditation_weekly_days = $8,
+		    pt_weekly_days = $9,
 		    updated_at = NOW()
 		WHERE id = 1`,
-		s.CalorieTarget, s.ProteinTargetMg, s.WeightTargetG,
+		s.CalorieTarget, s.ProteinTargetMg, s.SatFatTargetMg, s.WeightTargetG,
 		s.CardioWeeklyTarget, s.StrengthWeeklyTarget, s.YogaWeeklyTarget, s.MeditationWeeklyDays,
 		s.PTWeeklyDays)
 	if err != nil {
@@ -449,6 +529,7 @@ func (d *DB) DaySummary(ctx context.Context, day string) (*food.DaySummary, erro
 		ds.CarbsMg += food.EatenValue(it.CarbsMg, it.FractionPct)
 		ds.FatMg += food.EatenValue(it.FatMg, it.FractionPct)
 		ds.FiberMg += food.EatenValue(it.FiberMg, it.FractionPct)
+		ds.SatFatMg += food.EatenValue(it.SatFatMg, it.FractionPct)
 	}
 	if score, ok := food.DayScore(allItems); ok {
 		ds.Score = &score

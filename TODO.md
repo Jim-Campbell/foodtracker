@@ -8,6 +8,96 @@ DB, exercise never credits the calorie budget, no floats in stored data.
 Status: brainstorm, roughly ordered within each section. Items marked 🎯 are
 the likely next wave after E1–E4 land. Nothing here is committed work.
 
+---
+
+## Post-resolution-layer backlog 🎯 (from the 2026-07-22 health-coach review)
+
+Deferred from the July 2026 build prompt (`food_app_build_prompt_20260722.md`).
+Everything here depends on the **FDC resolution layer** being in place first —
+the analysis quality of all of it rests on the underlying numbers being right.
+Build order within this block: **validation layer → rolling windows → nudges**
+(each depends on the one before). The build prompt itself (meal-group export,
+missing-vs-zero, FDC resolution cascade, sat-fat target, outlier attribution,
+framework default cascade) is the committed near-term work and is **not**
+listed here.
+
+### A. Validation layer
+
+Runs on every item, meal group, and day before export. Failures populate
+`analysis_warnings` and flag inline with `"validation": ["..."]`. Under FDC
+resolution most of these should rarely fire — they exist to catch silent
+resolution failures and unreviewed tier-4 LLM estimates.
+
+- [ ] **Macro reconciliation.** `protein_g*4 + carbs_g*4 + fat_g*9` within ±10%
+      of stated `calories` (tighter than the current ±30% parse-time Atwater
+      check). FDC-sourced data should pass by construction; a post-migration
+      failure means a bad composite decomposition or an unreviewed estimate.
+- [ ] **Sodium bounds.** Hard ceiling: reject/​warn any single item > 5,000 mg
+      and any day > 10,000 mg. Hunt the **1000× multiplier bug** (a think! bar
+      reads 210,000 mg for a true ~210 mg; a Five Guys burger 430,000 mg for
+      ~430 mg) — likely a g↔mg conversion. Whole-wheat toast reading 2,212 mg
+      vs true ~250 mg looks like a *separate* bad-lookup class.
+- [ ] **Protein plausibility.** Flag any item where
+      `protein_g * 4 > calories * 0.85` — very few whole foods exceed this;
+      composite restaurant entries are where the current build fails worst.
+- [ ] **Density sanity.** Flag any item outside 0.2–9.0 cal/g.
+
+### B. Rolling windows and trend reporting
+
+Single-day numbers carry too much estimation noise to act on; 7-day means are
+usable. Add to the export and a summary view. This is the layer the "outlier
+attribution" from the build prompt measures its baseline against.
+
+- [ ] **7- and 14-day rolling means** for calories, protein,
+      `protein_pct_calories`, sat fat, and fiber.
+- [ ] **Week-over-week deltas.**
+- [ ] **Target-attainment rate per rolling window** — days hitting protein,
+      days within calorie target, days within sat-fat target.
+- [ ] Motivating case: protein rose 133.5 → 174.1 g/day week 1 → week 2, a real
+      successful change invisible in the day view. Build the view that would
+      have surfaced it live.
+
+### C. Nudges (protect logging fidelity above all else)
+
+Honest logging is the single most valuable property of this dataset; a nudge
+that costs one honest entry is a net loss regardless of the advice.
+
+- [ ] **Asymmetric timing.** Positive feedback fires immediately at entry
+      (reinforces logging); negative feedback defers to a daily/weekly review
+      surface — never a disapproving response to an honest log.
+- [ ] **Informational, not evaluative.** State the number ("11.2 cal per gram
+      of protein; whey isolate is 4.4"), no frowns/scolding/guilt/streak-breaks.
+- [ ] **Substitution, not prohibition.** Always frame as a swap.
+- [ ] **Pattern-level, not item-level.** Nudge on rolling-window patterns from
+      section B (e.g. 185 cal/day of nuts averaged over two weeks), never on a
+      single entry.
+- [ ] **Protected foods.** `protected: true` + required `protected_reason` on
+      the canonical food table — exempts an item from all negative nudging and
+      any discretionary-calorie rollup, settable from the entry screen. Seed
+      non-alcoholic beer (*"Alcohol substitute supporting sobriety. Behavioral
+      value substantially exceeds its ~58 cal/day cost. Never flag."*).
+- [ ] **Positive nudges worth firing:** hitting the protein target, a meal
+      group > ~35% protein by calories, fatty fish (omega-3 gap), logging every
+      slot in a day, any streak of consecutive logged days.
+
+### D. Smaller items, unscheduled
+
+- [ ] **Star / quick-add audit.** Periodic prompt to review what's starred —
+      the two starred items are currently the two least calorie-efficient
+      protein sources in the rotation. Friction gradients shape behavior more
+      than nudges.
+- [ ] **Alcohol as a budget, not a prohibition.** Alcohol is tiered `hard_no`,
+      which flags a planned event as a violation. Real rule is one drink/week,
+      banked. Optional `allowance` concept: named budget, weekly quota,
+      accrues, shows balance, reports draws rather than failures. Low priority.
+- [ ] **Visual hierarchy on the day view.** Protein is the stated
+      non-negotiable priority, calories the secondary constraint — the screen
+      currently says the opposite (big red "+438 over", thin protein bar).
+      Make protein the hero number (or a two-part state). Confirm the calorie
+      ring's target reflects the rate goal, not a legacy number.
+
+---
+
 ## Garmin import 🎯
 
 The watch already records cardio and yoga; stop double-logging them.

@@ -93,7 +93,7 @@ func TestServiceUpdateSettingsChangesRemaining(t *testing.T) {
 		t.Fatalf("CreateMeal failed: %v", err)
 	}
 
-	if _, err := svc.UpdateSettings(ctx, &Settings{CalorieTarget: 600, ProteinTargetMg: 100000}); err != nil {
+	if _, err := svc.UpdateSettings(ctx, &Settings{CalorieTarget: 600, ProteinTargetMg: 100000, SatFatTargetMg: 14000}); err != nil {
 		t.Fatalf("UpdateSettings failed: %v", err)
 	}
 
@@ -273,7 +273,7 @@ func TestServiceUpdateSettingsRoundTripsExerciseTargets(t *testing.T) {
 	ctx := context.Background()
 
 	updated, err := svc.UpdateSettings(ctx, &Settings{
-		CalorieTarget: 1800, ProteinTargetMg: 165000,
+		CalorieTarget: 1800, ProteinTargetMg: 165000, SatFatTargetMg: 14000,
 		CardioWeeklyTarget: 4, StrengthWeeklyTarget: 3, YogaWeeklyTarget: 1, MeditationWeeklyDays: 5, PTWeeklyDays: 6,
 	})
 	if err != nil {
@@ -288,7 +288,7 @@ func TestServiceUpdateSettingsRejectsNegativeExerciseTarget(t *testing.T) {
 	svc := newTestService()
 	ctx := context.Background()
 	_, err := svc.UpdateSettings(ctx, &Settings{
-		CalorieTarget: 1800, ProteinTargetMg: 165000, CardioWeeklyTarget: -1,
+		CalorieTarget: 1800, ProteinTargetMg: 165000, SatFatTargetMg: 14000, CardioWeeklyTarget: -1,
 	})
 	if err == nil {
 		t.Error("expected an error for a negative cardio_weekly_target, got nil")

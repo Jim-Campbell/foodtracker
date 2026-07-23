@@ -18,6 +18,7 @@ type fakeStore struct {
 	nextFavID int64
 	exercise  map[int64]*ExerciseSession
 	nextExID  int64
+	canonical map[string]*CanonicalFood
 }
 
 func newFakeStore() *fakeStore {
@@ -25,12 +26,41 @@ func newFakeStore() *fakeStore {
 		meals:   map[int64]*Meal{},
 		weights: map[string]Weight{},
 		settings: Settings{
-			CalorieTarget: 1800, ProteinTargetMg: 165000,
+			CalorieTarget: 1800, ProteinTargetMg: 165000, SatFatTargetMg: 14000,
 			CardioWeeklyTarget: 3, StrengthWeeklyTarget: 2, YogaWeeklyTarget: 2, MeditationWeeklyDays: 7, PTWeeklyDays: 7,
 		},
 		favorites: map[int64]*Favorite{},
 		exercise:  map[int64]*ExerciseSession{},
+		canonical: map[string]*CanonicalFood{},
 	}
+}
+
+func (f *fakeStore) UpsertCanonical(ctx context.Context, c *CanonicalFood) error {
+	if existing, ok := f.canonical[c.NormalizedName]; ok {
+		c.TimesLogged = existing.TimesLogged + 1
+	} else {
+		c.TimesLogged = 1
+	}
+	cp := *c
+	f.canonical[c.NormalizedName] = &cp
+	return nil
+}
+
+func (f *fakeStore) LookupCanonical(ctx context.Context, normalizedName string) (*CanonicalFood, error) {
+	c, ok := f.canonical[normalizedName]
+	if !ok {
+		return nil, nil
+	}
+	cp := *c
+	return &cp, nil
+}
+
+func (f *fakeStore) ListAllCanonical(ctx context.Context) ([]CanonicalFood, error) {
+	var out []CanonicalFood
+	for _, c := range f.canonical {
+		out = append(out, *c)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) CreateFavorite(ctx context.Context, fav *Favorite) error {
@@ -153,6 +183,7 @@ func (f *fakeStore) DaySummary(ctx context.Context, day string) (*DaySummary, er
 		ds.CarbsMg += EatenValue(it.CarbsMg, it.FractionPct)
 		ds.FatMg += EatenValue(it.FatMg, it.FractionPct)
 		ds.FiberMg += EatenValue(it.FiberMg, it.FractionPct)
+		ds.SatFatMg += EatenValue(it.SatFatMg, it.FractionPct)
 	}
 	if score, ok := DayScore(allItems); ok {
 		ds.Score = &score

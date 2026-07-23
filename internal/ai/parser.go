@@ -21,6 +21,13 @@ import (
 // model reading or regenerating thousands of nutrient tokens.
 type microsCache map[string]json.RawMessage
 
+// resolvedCache holds the authoritative per-100g nutrition of each food
+// resolved during a parse, keyed "<source>:<ref>" (e.g. "usda:173735"). finish()
+// multiplies these by the model's resolved grams so an item's numbers come from
+// FDC, not the model's arithmetic or recall (item 3). Separate from
+// microsCache, which caches the full micronutrient payload for storage.
+type resolvedCache map[string]nutrition.PerHundredGrams
+
 // maxToolRounds caps the agentic tool-use loop before record_meal is forced.
 const maxToolRounds = 8
 
@@ -34,14 +41,22 @@ type BarcodeLookuper interface {
 	Lookup(ctx context.Context, barcode string) (*nutrition.Product, error)
 }
 
+// CanonicalLookuper fetches a previously-resolved food by normalized name so a
+// repeat log reuses it instead of re-resolving (item 3 accretion). Optional:
+// when nil, the canonical_lookup tool isn't offered.
+type CanonicalLookuper interface {
+	LookupCanonical(ctx context.Context, normalizedName string) (*food.CanonicalFood, error)
+}
+
 // Parser runs one agentic Claude conversation per meal parse: send messages,
 // execute any tool calls, repeat until record_meal is called (or the round
 // cap forces it).
 type Parser struct {
-	client Messenger
-	usda   USDASearcher
-	off    BarcodeLookuper
-	log    *slog.Logger
+	client    Messenger
+	usda      USDASearcher
+	off       BarcodeLookuper
+	canonical CanonicalLookuper
+	log       *slog.Logger
 	// visionModel overrides the client's default model for photo parses.
 	// Vision work (reading barcode digits, nutrition panels) is where model
 	// capability shows -- a fast model that misreads a barcode logs the wrong
@@ -52,13 +67,17 @@ type Parser struct {
 	webSearch bool
 }
 
-func NewParser(client Messenger, usda USDASearcher, off BarcodeLookuper, visionModel string, webSearch bool, log *slog.Logger) *Parser {
-	return &Parser{client: client, usda: usda, off: off, visionModel: visionModel, webSearch: webSearch, log: log}
+func NewParser(client Messenger, usda USDASearcher, off BarcodeLookuper, canonical CanonicalLookuper, visionModel string, webSearch bool, log *slog.Logger) *Parser {
+	return &Parser{client: client, usda: usda, off: off, canonical: canonical, visionModel: visionModel, webSearch: webSearch, log: log}
 }
 
-// tools returns the parse loop's tool set, including web search when enabled.
+// tools returns the parse loop's tool set, including the canonical-lookup tool
+// when a store is wired and web search when enabled.
 func (p *Parser) tools() []Tool {
 	ts := tools()
+	if p.canonical != nil {
+		ts = append(ts, canonicalLookupTool())
+	}
 	if p.webSearch {
 		ts = append(ts, webSearchTool())
 	}
@@ -98,6 +117,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 	system := CachedSystem(p.systemPrompt(day))
 	messages := []Message{first}
 	cache := microsCache{}
+	resolved := resolvedCache{}
 	start := time.Now()
 
 	for round := 0; round < maxToolRounds; round++ {
@@ -111,7 +131,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 
 		if in, ok := extractRecordMeal(resp.Content); ok {
 			p.log.Info("parse done", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
-			return p.finish(in, resp.Model, messages, cache)
+			return p.finish(in, resp.Model, messages, cache, resolved)
 		}
 		if in, ok := extractLogExercise(resp.Content); ok {
 			p.log.Info("parse done (exercise)", "rounds", round+1, "total_ms", time.Since(start).Milliseconds())
@@ -125,7 +145,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 			continue
 		}
 
-		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache, emit)
+		toolResults, calledAny := p.executeTools(ctx, resp.Content, cache, resolved, emit)
 		if !calledAny {
 			messages = append(messages, UserMessage(TextBlock(
 				"Continue. When you have enough information, call record_meal to finish.")))
@@ -156,7 +176,7 @@ func (p *Parser) parse(ctx context.Context, first Message, day, model string, pr
 
 	if in, ok := extractRecordMeal(resp.Content); ok {
 		p.log.Info("parse done (forced)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
-		return p.finish(in, resp.Model, messages, cache)
+		return p.finish(in, resp.Model, messages, cache, resolved)
 	}
 	if in, ok := extractLogExercise(resp.Content); ok {
 		p.log.Info("parse done (forced exercise)", "rounds", maxToolRounds+1, "total_ms", time.Since(start).Milliseconds())
@@ -254,29 +274,69 @@ func extractLogExercise(content []json.RawMessage) (*logExerciseInput, bool) {
 // executeTools runs every tool_use block in content and returns the matching
 // tool_result blocks, in order. calledAny is false when content had no tool
 // calls at all (the model just talked).
-func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage, cache microsCache, emit Progress) (results []json.RawMessage, calledAny bool) {
+func (p *Parser) executeTools(ctx context.Context, content []json.RawMessage, cache microsCache, resolved resolvedCache, emit Progress) (results []json.RawMessage, calledAny bool) {
 	for _, b := range decodeBlocks(content) {
 		if b.Type != "tool_use" {
 			continue
 		}
 		calledAny = true
-		results = append(results, p.executeTool(ctx, b, cache, emit))
+		results = append(results, p.executeTool(ctx, b, cache, resolved, emit))
 	}
 	return results, calledAny
 }
 
-func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsCache, emit Progress) json.RawMessage {
+func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsCache, resolved resolvedCache, emit Progress) json.RawMessage {
 	switch block.Name {
 	case toolUSDASearch:
-		return p.execUSDASearch(ctx, block, cache, emit)
+		return p.execUSDASearch(ctx, block, cache, resolved, emit)
 	case toolOFFBarcode:
 		return p.execOFFBarcode(ctx, block, cache, emit)
+	case toolCanonicalLookup:
+		return p.execCanonicalLookup(ctx, block, resolved, emit)
 	default:
 		return ToolResultBlock(block.ID, fmt.Sprintf("unknown tool %q", block.Name), true)
 	}
 }
 
-func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache microsCache, emit Progress) json.RawMessage {
+// execCanonicalLookup answers from the accretion cache: on a hit it caches the
+// stored per-100g (so finish() computes nutrition from it exactly as it would
+// from a fresh usda_search) and returns the entry so the model can record the
+// item directly, skipping re-resolution.
+func (p *Parser) execCanonicalLookup(ctx context.Context, block blockMeta, resolved resolvedCache, emit Progress) json.RawMessage {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(block.Input, &in); err != nil {
+		return ToolResultBlock(block.ID, fmt.Sprintf("invalid canonical_lookup input: %v", err), true)
+	}
+	emit("Checking saved foods…")
+
+	cf, err := p.canonical.LookupCanonical(ctx, food.NormalizeFoodName(in.Name))
+	if err != nil {
+		p.log.Warn("canonical_lookup failed", "name", in.Name, "error", err)
+		return ToolResultBlock(block.ID, "canonical_lookup failed -- resolve this item normally with usda_search.", false)
+	}
+	if cf == nil {
+		return ToolResultBlock(block.ID, "no saved match -- resolve with usda_search (or estimate as a last resort).", false)
+	}
+
+	// Cache the stored per-100g under the same key finish() computes from, so
+	// the model only has to supply source_ref + grams.
+	if cf.SourceRef != nil && *cf.SourceRef != "" {
+		resolved[cf.Source+":"+*cf.SourceRef] = nutrition.PerHundredGrams{
+			Calories: cf.Per100g.Calories, ProteinMg: cf.Per100g.ProteinMg, CarbsMg: cf.Per100g.CarbsMg,
+			FatMg: cf.Per100g.FatMg, FiberMg: cf.Per100g.FiberMg, SatFatMg: cf.Per100g.SatFatMg,
+			SugarMg: cf.Per100g.SugarMg, SodiumMg: cf.Per100g.SodiumMg,
+		}
+	}
+	body, err := json.Marshal(cf)
+	if err != nil {
+		return ToolResultBlock(block.ID, fmt.Sprintf("failed to encode canonical result: %v", err), true)
+	}
+	return ToolResultBlock(block.ID, string(body), false)
+}
+
+func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache microsCache, resolved resolvedCache, emit Progress) json.RawMessage {
 	var in struct {
 		Query    string `json:"query"`
 		PageSize int    `json:"page_size"`
@@ -297,11 +357,13 @@ func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache micr
 		return ToolResultBlock(block.ID, "no USDA results found -- estimate this item instead.", false)
 	}
 
-	// Cache each result's full nutrient list for micros, then strip it from
-	// what the model sees: an FDC food can carry 100+ nutrient entries, and
-	// they'd be re-sent as input tokens on every remaining round.
+	// Cache each result's per-100g (for finish() to compute nutrition from the
+	// FDC entry, not the model's arithmetic) and its full nutrient list (for
+	// micros), then strip the nutrient list from what the model sees: an FDC
+	// food can carry 100+ nutrient entries, re-sent as input tokens every round.
 	slim := make([]nutrition.FDCFood, len(results))
 	for i, f := range results {
+		resolved[food.SourceUSDA+":"+strconv.Itoa(f.FDCID)] = f.Per100g
 		if len(f.Nutrients) > 0 {
 			payload, err := json.Marshal(struct {
 				Nutrients []nutrition.NutrientAmount `json:"nutrients"`
@@ -357,7 +419,7 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache micr
 // DB, so a rough item just becomes something Jim edits or deletes in the
 // draft preview), attaches cached full nutrient payloads as micros, and
 // packages the trace as ai_raw.
-func (p *Parser) finish(in *recordMealInput, model string, messages []Message, cache microsCache) (*food.ParseResult, error) {
+func (p *Parser) finish(in *recordMealInput, model string, messages []Message, cache microsCache, resolved resolvedCache) (*food.ParseResult, error) {
 	var extraNotes []string
 	for i := range in.Items {
 		it := &in.Items[i]
@@ -371,6 +433,11 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message, c
 		if it.Confidence == "" {
 			it.Confidence = food.ConfidenceMedium
 		}
+		// The model parses and picks the FDC entry; the app does the arithmetic
+		// (item 3). For a grounded item with cached per-100g and a portion
+		// weight, recompute every macro from the source of truth.
+		resolveNutrition(it, resolved, &extraNotes)
+		setProvenance(it)
 		if len(it.Micros) == 0 && it.SourceRef != nil && *it.SourceRef != "" {
 			if payload, ok := cache[it.Source+":"+*it.SourceRef]; ok {
 				it.Micros = payload
@@ -406,6 +473,101 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message, c
 	}, nil
 }
 
+// resolveNutrition replaces an item's calorie/macro fields with values computed
+// from the cascade's authoritative per-100g when the item was resolved through
+// a grounded source (usda/off) and carries a portion weight — the model must
+// never be trusted with this arithmetic (item 3). Items with no cached
+// resolution (ai/label/web estimates, or a match missing grams) keep the
+// model's numbers; a resolved match missing its portion weight is flagged.
+func resolveNutrition(it *food.MealItem, resolved resolvedCache, notes *[]string) {
+	if it.SourceRef == nil || *it.SourceRef == "" {
+		return
+	}
+	// Compute whenever this parse resolved a per-100g for the item's
+	// source:source_ref — from a fresh usda_search (usda) or a canonical-cache
+	// hit (any grounded source). Absent a cached basis (label/web/ai estimates
+	// with no lookup), the model's own numbers stand.
+	per, ok := resolved[it.Source+":"+*it.SourceRef]
+	if !ok {
+		return
+	}
+	if it.Grams == nil || *it.Grams <= 0 {
+		*notes = append(*notes, fmt.Sprintf("%s: resolved to a database entry but has no portion weight — kept the estimate", it.Name))
+		return
+	}
+	g := int64(*it.Grams)
+	it.Calories = per.Calories * g / 100
+	it.ProteinMg = per.ProteinMg * g / 100
+	it.CarbsMg = per.CarbsMg * g / 100
+	it.FatMg = per.FatMg * g / 100
+	it.FiberMg = per.FiberMg * g / 100
+	it.SatFatMg = per.SatFatMg * g / 100
+	it.SugarMg = per.SugarMg * g / 100
+	it.SodiumMg = per.SodiumMg * g / 100
+}
+
+// setProvenance fills the resolution-provenance fields (item 3): the FDC id
+// (parsed from source_ref for usda), the cascade tier that answered, how the
+// portion was arrived at, and a default tier_source. Fields the model already
+// set (portion_source, tier_source) are respected.
+func setProvenance(it *food.MealItem) {
+	if it.Source == food.SourceUSDA && it.SourceRef != nil {
+		if id, err := strconv.ParseInt(*it.SourceRef, 10, 64); err == nil {
+			it.FDCID = &id
+		}
+	}
+	if tier := resolutionTier(it.Source, it.FDCDataType); tier != 0 {
+		it.ResolutionTier = &tier
+	}
+	if it.PortionSource == nil {
+		ps := inferPortionSource(it.Source)
+		it.PortionSource = &ps
+	}
+	if it.TierSource == nil {
+		ts := food.TierSourceTable
+		it.TierSource = &ts
+	}
+}
+
+// resolutionTier maps a source (+ FDC data type for usda) to the cascade tier
+// that answered. Returns 0 when unknown (e.g. a usda item whose data type the
+// model didn't report), leaving resolution_tier null rather than guessed.
+func resolutionTier(source string, dataType *string) int {
+	switch source {
+	case food.SourceOFF, food.SourceLabel:
+		return food.ResolutionBrandedLabel
+	case food.SourceWeb:
+		return food.ResolutionSurveyWeb
+	case food.SourceAI:
+		return food.ResolutionLLMEstimate
+	case food.SourceUSDA:
+		if dataType == nil {
+			return 0
+		}
+		switch {
+		case strings.Contains(*dataType, "Survey"):
+			return food.ResolutionSurveyWeb
+		case strings.Contains(*dataType, "Branded"):
+			return food.ResolutionBrandedLabel
+		case strings.Contains(*dataType, "Foundation"), strings.Contains(*dataType, "SR Legacy"):
+			return food.ResolutionFoundationSR
+		}
+	}
+	return 0
+}
+
+// inferPortionSource is the default portion provenance at parse time: a
+// packaged/label item is a package unit, everything else is eyeballed until
+// Jim marks it weighed in the confirm sheet.
+func inferPortionSource(source string) string {
+	switch source {
+	case food.SourceOFF, food.SourceLabel:
+		return food.PortionPackageUnit
+	default:
+		return food.PortionEstimated
+	}
+}
+
 // finishExercise validates each parsed session's per-type required fields
 // (the AI never writes to the DB, so an incomplete session just becomes
 // something Jim completes in the confirm sheet) and packages the trace as
@@ -436,6 +598,11 @@ func (p *Parser) systemPrompt(day string) string {
 	// The branded-product fallback depends on whether web search is available:
 	// with it, escalate to the brand's published nutrition; without it, an
 	// estimate is the best remaining option.
+	canonicalGuidance := ""
+	if p.canonical != nil {
+		canonicalGuidance = `
+- Call canonical_lookup FIRST for each food. On a hit the app already holds this food's FDC id, per-100g nutrition, and quality tier from a previous log -- record it directly (copy source/source_ref/fdc_data_type from the result, pick grams, keep the returned tier and tier_source) and skip usda_search. Only search when the lookup misses.`
+	}
 	webGuidance := `
 - For branded packaged products (protein powders, bars, cereals), if the first search has no confident match, estimate from your knowledge of that product's label rather than searching USDA again.`
 	if p.webSearch {
@@ -456,7 +623,13 @@ DIET FRAMEWORK -- the source of truth for the "tier" field on every item. Apply 
 
 TIERS
 - hard_yes = 100, soft_yes = 75, neutral = 50, soft_no = 25, hard_no = 0.
-- "neutral" means the framework above does not address this food at all. Do not stretch a food into hard_yes/hard_no just because it generally feels healthy or unhealthy -- use neutral when it's genuinely unaddressed. tier_reason is five words or fewer, either way.
+- The framework's "Default Rule" cascade at the top decides any food not explicitly listed -- apply it rather than defaulting to neutral. Reserve "neutral" for a food the cascade genuinely leaves unaddressed. tier_reason is five words or fewer, either way.
+- Set tier_source: "table" when the food is explicitly listed in the framework's Hard/Soft sections; "cascade" when you applied the Default Rule to an unlisted food.
+
+HOW NUTRITION IS COMPUTED -- you resolve, the app does the arithmetic
+- For usda and off items you do NOT compute calories or macros. Put the chosen FDC id (digits only) in source_ref, the result's data_type in fdc_data_type, and the FULL-PORTION weight in grams -- the app multiplies the entry's per-100g values by those grams itself. Resolve grams from the search result's "portions" household-measure weights when present (e.g. "1/4 cup" -> the matching portion's gram_weight) instead of guessing; this is what makes a quarter cup and a half cup differ correctly. You may omit the calorie/macro fields entirely for these items.
+- For ai, label, and web items there is no database entry to scale, so you DO provide full-portion calories and every macro yourself.
+- fraction_pct is still separate from grams: grams is the full portion, fraction_pct is how much of it was eaten.
 
 UNITS -- integers only, never floats, in every numeric field you return
 - calories: integer kcal, for the FULL portion (not as-eaten)
@@ -464,7 +637,7 @@ UNITS -- integers only, never floats, in every numeric field you return
 - grams: integer grams, estimated full-portion weight (omit/null if you can't estimate it)
 - fraction_pct: integer percent of the full portion actually eaten, 1-300, default 100
 
-TOOLS AND ESTIMATION
+TOOLS AND ESTIMATION%s
 - Prefer usda_search for whole foods and common dishes (e.g. "grilled chicken breast", "banana", "brown rice"). Prefer Foundation/SR Legacy results over Branded when both are plausible matches.
 - Batch your lookups: issue every usda_search call (one per item) together in a single response. A typical parse is two turns total -- one batched lookup turn, then record_meal. Only take an extra turn when a first search came back empty or clearly wrong.
 - Don't over-search USDA: at most one usda_search per item, plus at most one reworded retry for the whole meal.%s
@@ -486,5 +659,5 @@ PHOTOS -- when the first message includes an image, decide which of these it is 
 FINISHING
 - notes is a glance-line for Jim, not a report: at most one short sentence, and only for something he couldn't guess himself (an unusual portion assumption, ambiguous wording, a failed lookup). When the read was straightforward, return an empty string. Never re-list the items or narrate your process.
 - Never write prose around tool calls. A response that calls a tool -- including record_meal/log_exercise -- must contain ONLY the tool call(s), no text before or after. Nobody reads that text; every token of it just makes the parse slower.
-- Call exactly one of record_meal or log_exercise, as your final action, to submit the parse.`, day, docs.DietFramework, webGuidance)
+- Call exactly one of record_meal or log_exercise, as your final action, to submit the parse.`, day, docs.DietFramework, canonicalGuidance, webGuidance)
 }

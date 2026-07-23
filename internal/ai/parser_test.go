@@ -50,6 +50,16 @@ func (f *fakeOFF) Lookup(ctx context.Context, barcode string) (*nutrition.Produc
 	return &nutrition.Product{Name: "test product"}, nil
 }
 
+type fakeCanonical struct {
+	entry  *food.CanonicalFood
+	called bool
+}
+
+func (f *fakeCanonical) LookupCanonical(ctx context.Context, normalizedName string) (*food.CanonicalFood, error) {
+	f.called = true
+	return f.entry, nil
+}
+
 func toolUseBlock(id, name string, input any) json.RawMessage {
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -122,7 +132,7 @@ func TestParserToolLoopMechanics(t *testing.T) {
 	usda := &fakeUSDA{results: []nutrition.FDCFood{{FDCID: 1, Description: "Egg, whole, raw"}}}
 	off := &fakeOFF{}
 
-	p := NewParser(messenger, usda, off, "", true, slog.Default())
+	p := NewParser(messenger, usda, off, nil, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -184,7 +194,7 @@ func TestParserMicrosAttachedServerSide(t *testing.T) {
 		},
 	}}}
 
-	p := NewParser(messenger, usda, &fakeOFF{}, "", true, slog.Default())
+	p := NewParser(messenger, usda, &fakeOFF{}, nil, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -213,6 +223,124 @@ func TestParserMicrosAttachedServerSide(t *testing.T) {
 	}
 }
 
+// TestParserResolvesNutritionFromFDC: for a usda item the app computes every
+// macro from the cached FDC per-100g times the resolved grams (item 3) and
+// discards whatever numbers the model put in the tool call, and it records the
+// resolution provenance.
+func TestParserResolvesNutritionFromFDC(t *testing.T) {
+	ref := "2016166"
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolUSDASearch, map[string]any{"query": "salmon"})},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "salmon"
+					it.Source = food.SourceUSDA
+					it.SourceRef = &ref
+					dt := "Foundation"
+					it.FDCDataType = &dt
+					g := 150
+					it.Grams = &g
+					// Deliberately wrong model numbers -- the app must overwrite them.
+					it.Calories = 9999
+					it.ProteinMg = 1
+				})},
+			})},
+		},
+	}}
+	usda := &fakeUSDA{results: []nutrition.FDCFood{{
+		FDCID: 2016166, Description: "Salmon", DataType: "Foundation",
+		Per100g: nutrition.PerHundredGrams{Calories: 200, ProteinMg: 25000, FatMg: 12000, SatFatMg: 2000, SodiumMg: 60},
+	}}}
+
+	p := NewParser(messenger, usda, &fakeOFF{}, nil, "", false, slog.Default())
+	result, err := p.ParseText(context.Background(), "150g salmon", "2026-07-20", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+
+	it := result.Items[0]
+	if it.Calories != 300 { // 200 per 100g * 150 g
+		t.Errorf("Calories = %d, want 300 (FDC per-100g * grams), not the model's 9999", it.Calories)
+	}
+	if it.ProteinMg != 37500 {
+		t.Errorf("ProteinMg = %d, want 37500 (25000 * 150 / 100)", it.ProteinMg)
+	}
+	if it.SatFatMg != 3000 {
+		t.Errorf("SatFatMg = %d, want 3000", it.SatFatMg)
+	}
+	if it.FDCID == nil || *it.FDCID != 2016166 {
+		t.Errorf("FDCID = %v, want 2016166", it.FDCID)
+	}
+	if it.ResolutionTier == nil || *it.ResolutionTier != food.ResolutionFoundationSR {
+		t.Errorf("ResolutionTier = %v, want 2 (Foundation)", it.ResolutionTier)
+	}
+	if it.PortionSource == nil || *it.PortionSource != food.PortionEstimated {
+		t.Errorf("PortionSource = %v, want estimated", it.PortionSource)
+	}
+	if it.TierSource == nil || *it.TierSource != food.TierSourceTable {
+		t.Errorf("TierSource = %v, want the table default", it.TierSource)
+	}
+}
+
+// TestParserCanonicalReuse: on a canonical_lookup hit the model records the
+// item straight from the cached entry (no usda_search), and finish() computes
+// nutrition from the cached per-100g exactly as it would from a fresh lookup
+// (item 3 accretion).
+func TestParserCanonicalReuse(t *testing.T) {
+	ref, dt := "173735", "Foundation"
+	canon := &fakeCanonical{entry: &food.CanonicalFood{
+		NormalizedName: "orgain protein powder", DisplayName: "Orgain protein powder",
+		Source: food.SourceUSDA, SourceRef: &ref, FDCDataType: &dt,
+		Per100g: food.Per100{Calories: 400, ProteinMg: 80000},
+		Tier:    food.TierSoftYes,
+	}}
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolCanonicalLookup, map[string]any{"name": "Orgain protein powder"})},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "Orgain protein powder"
+					it.Source = food.SourceUSDA
+					it.SourceRef = &ref
+					it.FDCDataType = &dt
+					g := 25
+					it.Grams = &g
+					it.Calories = 9999 // must be overwritten from the cached per-100g
+				})},
+			})},
+		},
+	}}
+	usda := &fakeUSDA{}
+
+	p := NewParser(messenger, usda, &fakeOFF{}, canon, "", false, slog.Default())
+	result, err := p.ParseText(context.Background(), "an orgain shake", "2026-07-20", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	if !canon.called {
+		t.Error("expected canonical_lookup to be called")
+	}
+	if usda.called {
+		t.Error("usda_search should be skipped on a canonical hit")
+	}
+	it := result.Items[0]
+	if it.Calories != 100 { // 400 per 100g * 25 g
+		t.Errorf("Calories = %d, want 100 from the cached per-100g", it.Calories)
+	}
+	if it.ProteinMg != 20000 { // 80000 * 25 / 100
+		t.Errorf("ProteinMg = %d, want 20000", it.ProteinMg)
+	}
+}
+
 // TestParserPauseTurnResumes: a server tool (web search) can pause the turn;
 // the loop must replay the conversation as-is -- appending the assistant
 // content but no user message -- so the API resumes the search.
@@ -234,7 +362,7 @@ func TestParserPauseTurnResumes(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", true, slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "5 guys standard burger", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -290,7 +418,7 @@ func TestParserPreservesUnmodeledBlocks(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", true, slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", true, slog.Default())
 	if _, err := p.ParseText(context.Background(), "an egg", "2026-07-07", nil); err != nil {
 		t.Fatalf("ParseText: %v", err)
 	}
@@ -326,7 +454,7 @@ func TestParserRoundCapForcesRecordMeal(t *testing.T) {
 	usda := &fakeUSDA{}
 	off := &fakeOFF{}
 
-	p := NewParser(messenger, usda, off, "", true, slog.Default())
+	p := NewParser(messenger, usda, off, nil, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "some mystery food", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -363,7 +491,7 @@ func TestParserImageMessageShape(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "claude-sonnet-5", true, slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "claude-sonnet-5", true, slog.Default())
 	imageBytes := []byte("fake-png-bytes")
 	result, err := p.ParseImage(context.Background(), imageBytes, "image/png", "I had half of this", "2026-07-07", nil)
 	if err != nil {
@@ -433,7 +561,7 @@ func TestParserValidationWiring(t *testing.T) {
 		},
 	}}
 
-	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, "", true, slog.Default())
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "some carby thing", "2026-07-07", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)
@@ -469,7 +597,7 @@ func TestParserLogExercise(t *testing.T) {
 	usda := &fakeUSDA{}
 	off := &fakeOFF{}
 
-	p := NewParser(messenger, usda, off, "", true, slog.Default())
+	p := NewParser(messenger, usda, off, nil, "", true, slog.Default())
 	result, err := p.ParseText(context.Background(), "hike then a swim this morning", "2026-07-17", nil)
 	if err != nil {
 		t.Fatalf("ParseText: %v", err)

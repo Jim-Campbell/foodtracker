@@ -116,6 +116,11 @@ input[type=text], input[type=number], input[type=date] {
 .macrorow svg { flex-shrink: 0; }
 .leg { font-size: .8rem; line-height: 1.5; display: flex; align-items: center; gap: 6px; }
 .legdot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+/* outlier attribution line (item 6): a quiet flag on an off day */
+.anomaly { padding: 12px 16px; }
+.anomaly summary { font-size: .9rem; color: var(--text); cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+.anomaly summary::-webkit-details-marker { display: none; }
+.anomaly-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); flex-shrink: 0; }
 /* training card — one row per activity: icon, 7 day-boxes (Mon–Sun), goal circles */
 /* icon is pinned to the left; a flexible spacer on each side of the day-box +
    circles cluster keeps that cluster centered in the leftover width. */
@@ -463,12 +468,20 @@ function pieSVG(parts, size) {
 function macroRow(s) {
   const pg = Math.round(s.protein_mg / 1000), cg = Math.round(s.carbs_mg / 1000), fg = Math.round(s.fat_mg / 1000);
   const fiberG = Math.round(s.fiber_mg / 1000);
+  const satG = Math.round((s.sat_fat_mg || 0) / 1000);
+  const satTargetG = Math.round((s.sat_fat_target_mg || 0) / 1000);
   const pk = pg * 4, ck = cg * 4, fk = fg * 9;
   const tot = pk + ck + fk;
   if (tot <= 0) return '';
   const pct = k => Math.round(k * 100 / tot);
   const leg = (color, label, pctV, grams) =>
     `<div class="leg"><span class="legdot" style="background:${color}"></span>${label} <b>${pctV}%</b> · ${grams} g</div>`;
+  // Saturated fat is a ceiling, not a share — cardiovascular target, shown
+  // as actual / ceiling and reddened when over (item 5).
+  const satOver = satTargetG > 0 && satG > satTargetG;
+  const satLine = satTargetG > 0
+    ? `<div class="leg"><span class="legdot" style="background:none;border:1.5px solid ${satOver ? 'var(--red)' : 'var(--muted)'}"></span>Sat fat · <b style="color:${satOver ? 'var(--red)' : 'inherit'}">${satG}</b> / ${satTargetG} g</div>`
+    : '';
   return `<div class="macrorow">
     ${pieSVG([
       { val: pk, color: MACRO_COLORS.protein },
@@ -480,6 +493,7 @@ function macroRow(s) {
       ${leg(MACRO_COLORS.carbs, 'Carbs', pct(ck), cg)}
       ${leg(MACRO_COLORS.fat, 'Fat', pct(fk), fg)}
       <div class="leg"><span class="legdot" style="background:none;border:1.5px solid var(--muted)"></span>Fiber · ${fiberG} g</div>
+      ${satLine}
     </div>
   </div>`;
 }
@@ -555,6 +569,18 @@ function mealRow(m) {
   const star = matchingFavorite(m.items) ? ' <span title="Favorited">★</span>' : '';
   return `<div class="row" onclick="editMeal(${m.id})">${thumb}<div class="grow"><div class="m">${esc(mealTitle(m))}${star}</div><div class="s">${macroSummary(mealCalories(m), mealProtein(m), mealCarbs(m), mealFat(m))}</div></div></div>`;
 }
+// anomalyLine: the outlier attribution (item 6) as one expandable line under
+// the hero — a quiet flag on an off day, nothing at all on a normal one. Tap to
+// see the 2-3 foods that drove it. Informational, never a grade.
+function anomalyLine(s) {
+  const a = s.anomaly;
+  if (!a || !a.headline) return '';
+  const reasons = (a.reasons || []).map(r => `<div class="s" style="padding:3px 0 0 20px">${esc(r)}</div>`).join('');
+  return `<details class="card anomaly">
+    <summary><span class="anomaly-dot"></span>${esc(a.headline)}</summary>
+    <div style="margin-top:6px">${reasons || '<div class="s">No single item stands out.</div>'}</div>
+  </details>`;
+}
 function renderToday(m) {
   const s = S.summary;
   if (!s) { m.innerHTML = '<div class="empty">Loading…</div>'; return; }
@@ -574,6 +600,7 @@ function renderToday(m) {
       ${proteinBar(s.protein_mg, s.protein_target_mg)}
       ${macroRow(s)}
     </div>
+    ${anomalyLine(s)}
     ${trainingCardHTML()}
     ${hasAny
       ? order.map(([key, label]) => {
@@ -1714,6 +1741,8 @@ function renderSettings(m) {
       <input type="number" id="setCal" value="${s.calorie_target || ''}">
       <label class="f">Daily protein target (g)</label>
       <input type="number" id="setProtein" value="${s.protein_target_mg ? Math.round(s.protein_target_mg / 1000) : ''}">
+      <label class="f">Daily saturated-fat ceiling (g)</label>
+      <input type="number" id="setSatFat" value="${s.sat_fat_target_mg ? Math.round(s.sat_fat_target_mg / 1000) : ''}">
       <label class="f">Goal weight (lb)</label>
       <input type="number" id="setWeight" step="0.1" value="${s.weight_target_g ? (s.weight_target_g / 453.592).toFixed(1) : ''}">
       <div class="dlg-actions"><button class="btn primary" onclick="saveSettings()">Save</button></div>
@@ -1748,9 +1777,11 @@ function renderSettings(m) {
 async function saveSettings() {
   const cal = parseInt($('#setCal').value, 10) || 0;
   const pg = parseFloat($('#setProtein').value) || 0;
+  const sfg = parseFloat($('#setSatFat').value) || 0;
   const wlb = parseFloat($('#setWeight').value);
   const body = {
-    calorie_target: cal, protein_target_mg: Math.round(pg * 1000), weight_target_g: wlb ? Math.round(wlb * 453.592) : null,
+    calorie_target: cal, protein_target_mg: Math.round(pg * 1000), sat_fat_target_mg: Math.round(sfg * 1000),
+    weight_target_g: wlb ? Math.round(wlb * 453.592) : null,
     cardio_weekly_target: parseInt($('#setCardio').value, 10) || 0,
     strength_weekly_target: parseInt($('#setStrength').value, 10) || 0,
     yoga_weekly_target: parseInt($('#setYoga').value, 10) || 0,
@@ -1804,7 +1835,7 @@ async function runAnalysisExport() {
   if (start > end) { toast('Start date is after end date'); return; }
   try {
     const doc = await api(`/export/analysis?start=${start}&end=${end}`);
-    if (!(doc.days && doc.days.length) && !(doc.meals && doc.meals.length)) { toast('No data in that range'); return; }
+    if (!(doc.days && doc.days.length) && !(doc.meal_groups && doc.meal_groups.length)) { toast('No data in that range'); return; }
     const base = `food-analysis-${start}_${end}`;
     downloadBlob(JSON.stringify(doc, null, 2), base + '.json', 'application/json');
     // stagger the second download so the browser doesn't suppress it
@@ -1814,19 +1845,24 @@ async function runAnalysisExport() {
   } catch (e) { toast('Error: ' + e.message); }
 }
 // Flatten the per-day rollup into a CSV (nutrition + exercise summary + weight).
-// Every value is a number, date, or blank, so no quoting/escaping is needed.
+// food and exercise are each null on days with no logging in that domain — a
+// blank cell, never a misleading 0 (mirrors the JSON's null-not-zero rule).
 function daysToCSV(days) {
   const cols = ['date', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'sat_fat_g', 'sugar_g',
-    'sodium_mg', 'quality_score', 'calorie_target', 'weight_lb',
+    'sodium_mg', 'protein_pct_calories', 'quality_score', 'calorie_target', 'sat_fat_target_g', 'weight_lb',
     'cardio_min', 'strength_sessions', 'yoga_min', 'meditation_min', 'pt_min', 'active_min'];
+  const num = v => v == null ? '' : v;
   const rows = [cols.join(',')];
   for (const d of days) {
-    const ex = d.exercise || {};
+    const f = d.food, ex = d.exercise;
     rows.push([
-      d.date, d.calories, d.protein_g, d.carbs_g, d.fat_g, d.fiber_g, d.sat_fat_g, d.sugar_g, d.sodium_mg,
-      d.quality_score == null ? '' : d.quality_score, d.calorie_target,
-      d.weight_lb == null ? '' : d.weight_lb,
-      ex.cardio_min || 0, ex.strength_sessions || 0, ex.yoga_min || 0, ex.meditation_min || 0, ex.pt_min || 0, ex.active_min || 0,
+      d.date,
+      f ? f.calories : '', f ? f.protein_g : '', f ? f.carbs_g : '', f ? f.fat_g : '', f ? f.fiber_g : '',
+      f ? f.sat_fat_g : '', f ? f.sugar_g : '', f ? f.sodium_mg : '',
+      f ? f.protein_pct_calories : '', f ? num(f.quality_score) : '', d.calorie_target, d.sat_fat_target_g,
+      num(d.weight_lb),
+      ex ? ex.cardio_min : '', ex ? ex.strength_sessions : '', ex ? ex.yoga_min : '',
+      ex ? ex.meditation_min : '', ex ? ex.pt_min : '', ex ? ex.active_min : '',
     ].join(','));
   }
   return rows.join('\n') + '\n';

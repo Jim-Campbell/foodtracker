@@ -73,7 +73,11 @@ func (s *Service) CreateMeal(ctx context.Context, m *Meal) error {
 	if err := validateMeal(m); err != nil {
 		return err
 	}
-	return s.store.CreateMeal(ctx, m)
+	if err := s.store.CreateMeal(ctx, m); err != nil {
+		return err
+	}
+	s.accreteCanonical(ctx, m.Items)
+	return nil
 }
 
 func (s *Service) GetMeal(ctx context.Context, id int64) (*Meal, error) {
@@ -105,7 +109,12 @@ func (s *Service) UpdateMeal(ctx context.Context, m *Meal) error {
 	if err := validateMeal(m); err != nil {
 		return err
 	}
-	return s.store.UpdateMeal(ctx, m)
+	if err := s.store.UpdateMeal(ctx, m); err != nil {
+		return err
+	}
+	// A corrected match re-logs the food, propagating the new numbers forward.
+	s.accreteCanonical(ctx, m.Items)
+	return nil
 }
 
 func (s *Service) DeleteMeal(ctx context.Context, id int64) error {
@@ -206,6 +215,9 @@ func (s *Service) UpdateSettings(ctx context.Context, in *Settings) (*Settings, 
 	}
 	if in.ProteinTargetMg <= 0 {
 		return nil, fmt.Errorf("invalid: protein_target_mg must be positive")
+	}
+	if in.SatFatTargetMg <= 0 {
+		return nil, fmt.Errorf("invalid: sat_fat_target_mg must be positive")
 	}
 	if in.WeightTargetG != nil && *in.WeightTargetG <= 0 {
 		return nil, fmt.Errorf("invalid: weight_target_g must be positive")
@@ -377,9 +389,47 @@ func (s *Service) DaySummary(ctx context.Context, day string) (*DaySummary, erro
 	}
 	ds.CalorieTarget = settings.CalorieTarget
 	ds.ProteinTargetMg = settings.ProteinTargetMg
+	ds.SatFatTargetMg = settings.SatFatTargetMg
 	ds.CaloriesRemaining = int64(settings.CalorieTarget) - ds.Calories
 	ds.ProteinRemainingMg = settings.ProteinTargetMg - ds.ProteinMg
+
+	// Outlier attribution (item 6): explain a day that came back surprisingly
+	// low against Jim's own trailing baseline, or that went over the sat-fat
+	// ceiling — invisible on a normal day.
+	var allItems []MealItem
+	for _, m := range ds.Meals {
+		allItems = append(allItems, m.Items...)
+	}
+	ds.Anomaly = ComputeAnomaly(allItems, ds.Score, s.trailingScoreBaseline(ctx, day), ds.SatFatMg, ds.SatFatTargetMg)
 	return ds, nil
+}
+
+// trailingScoreBaseline is the mean quality score over the 14 days before day,
+// used as the personal baseline an outlier is measured against (item 6).
+// Returns nil when too few of those days carry a score to be trustworthy.
+func (s *Service) trailingScoreBaseline(ctx context.Context, day string) *int {
+	d, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return nil
+	}
+	start := d.AddDate(0, 0, -14).Format("2006-01-02")
+	end := d.AddDate(0, 0, -1).Format("2006-01-02")
+	rows, err := s.store.RangeSummary(ctx, start, end)
+	if err != nil {
+		return nil
+	}
+	var sum, n int
+	for _, r := range rows {
+		if r.Score != nil {
+			sum += *r.Score
+			n++
+		}
+	}
+	if n < minBaselineDays {
+		return nil
+	}
+	mean := sum / n
+	return &mean
 }
 
 func (s *Service) RangeSummary(ctx context.Context, start, end string) ([]RangeDay, error) {
@@ -435,6 +485,13 @@ func (s *Service) Export(ctx context.Context) (*ExportDoc, error) {
 	if exercise == nil {
 		exercise = []ExerciseSession{}
 	}
+	canonical, err := s.store.ListAllCanonical(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if canonical == nil {
+		canonical = []CanonicalFood{}
+	}
 	return &ExportDoc{
 		ExportedAt: time.Now().UTC(),
 		Settings:   *settings,
@@ -442,5 +499,6 @@ func (s *Service) Export(ctx context.Context) (*ExportDoc, error) {
 		Meals:      meals,
 		Favorites:  favorites,
 		Exercise:   exercise,
+		Canonical:  canonical,
 	}, nil
 }

@@ -38,6 +38,33 @@ const (
 	ConfidenceLow    = "low"
 )
 
+// PortionSource records how an item's portion weight was arrived at — the
+// dominant error source once nutrition lookup is authoritative (item 3).
+const (
+	PortionWeighed     = "weighed"      // put on a kitchen scale
+	PortionPackageUnit = "package_unit" // a whole package / labeled serving unit
+	PortionEstimated   = "estimated"    // eyeballed
+)
+
+// TierSource records whether a quality tier came from an explicit entry in the
+// diet framework (table) or from its Default Rule decision cascade for an
+// unlisted food (cascade) — so a genuine "neutral" is distinguishable from a
+// lookup miss (item 3, framework v3).
+const (
+	TierSourceTable   = "table"
+	TierSourceCascade = "cascade"
+)
+
+// ResolutionTier is the FDC cascade tier that answered (item 3): 1 = barcode /
+// Branded / label, 2 = Foundation or SR Legacy, 3 = Survey (FNDDS) or web,
+// 4 = LLM estimate (last resort).
+const (
+	ResolutionBrandedLabel = 1
+	ResolutionFoundationSR = 2
+	ResolutionSurveyWeb    = 3
+	ResolutionLLMEstimate  = 4
+)
+
 const (
 	InputText    = "text"
 	InputVoice   = "voice"
@@ -84,6 +111,12 @@ var validSources = map[string]bool{
 }
 var validConfidences = map[string]bool{
 	ConfidenceHigh: true, ConfidenceMedium: true, ConfidenceLow: true,
+}
+var validPortionSources = map[string]bool{
+	PortionWeighed: true, PortionPackageUnit: true, PortionEstimated: true,
+}
+var validTierSources = map[string]bool{
+	TierSourceTable: true, TierSourceCascade: true,
 }
 var validInputKinds = map[string]bool{
 	InputText: true, InputVoice: true, InputPhoto: true, InputBarcode: true, InputManual: true,
@@ -135,6 +168,13 @@ type MealItem struct {
 	Source      string          `json:"source"`
 	SourceRef   *string         `json:"source_ref,omitempty"`
 	Confidence  string          `json:"confidence"`
+	// Resolution provenance (item 3). All nil on legacy rows and on manual
+	// entries; populated by the parser's resolution cascade.
+	FDCID          *int64  `json:"fdc_id,omitempty"`
+	FDCDataType    *string `json:"fdc_data_type,omitempty"`   // Branded | Foundation | SR Legacy | Survey (FNDDS)
+	ResolutionTier *int    `json:"resolution_tier,omitempty"` // 1..4, see ResolutionTier consts
+	PortionSource  *string `json:"portion_source,omitempty"`  // weighed | package_unit | estimated
+	TierSource     *string `json:"tier_source,omitempty"`     // table | cascade
 }
 
 // Weight is one day's weigh-in; a second entry for the same day replaces it.
@@ -148,6 +188,7 @@ type Weight struct {
 type Settings struct {
 	CalorieTarget        int       `json:"calorie_target"`
 	ProteinTargetMg      int64     `json:"protein_target_mg"`
+	SatFatTargetMg       int64     `json:"sat_fat_target_mg"`
 	WeightTargetG        *int      `json:"weight_target_g,omitempty"`
 	CardioWeeklyTarget   int       `json:"cardio_weekly_target"`
 	StrengthWeeklyTarget int       `json:"strength_weekly_target"`
@@ -185,18 +226,31 @@ type ExerciseSession struct {
 // DaySummary is the as-eaten totals and quality score for one day, plus the
 // day's meals. Score is nil when the day has no calorie-bearing items.
 type DaySummary struct {
-	Day                string `json:"day"`
-	Calories           int64  `json:"calories"`
-	ProteinMg          int64  `json:"protein_mg"`
-	CarbsMg            int64  `json:"carbs_mg"`
-	FatMg              int64  `json:"fat_mg"`
-	FiberMg            int64  `json:"fiber_mg"`
-	Score              *int   `json:"score"`
-	CalorieTarget      int    `json:"calorie_target"`
-	ProteinTargetMg    int64  `json:"protein_target_mg"`
-	CaloriesRemaining  int64  `json:"calories_remaining"`
-	ProteinRemainingMg int64  `json:"protein_remaining_mg"`
-	Meals              []Meal `json:"meals"`
+	Day                string      `json:"day"`
+	Calories           int64       `json:"calories"`
+	ProteinMg          int64       `json:"protein_mg"`
+	CarbsMg            int64       `json:"carbs_mg"`
+	FatMg              int64       `json:"fat_mg"`
+	FiberMg            int64       `json:"fiber_mg"`
+	SatFatMg           int64       `json:"sat_fat_mg"`
+	Score              *int        `json:"score"`
+	CalorieTarget      int         `json:"calorie_target"`
+	ProteinTargetMg    int64       `json:"protein_target_mg"`
+	SatFatTargetMg     int64       `json:"sat_fat_target_mg"`
+	CaloriesRemaining  int64       `json:"calories_remaining"`
+	ProteinRemainingMg int64       `json:"protein_remaining_mg"`
+	Anomaly            *DayAnomaly `json:"anomaly,omitempty"`
+	Meals              []Meal      `json:"meals"`
+}
+
+// DayAnomaly is the outlier attribution for a day (item 6): it exists only when
+// the day's quality score fell meaningfully below its own trailing baseline, or
+// the day went over the saturated-fat ceiling. Nil on normal days, so the UI
+// shows nothing. Headline is the one-line summary; Reasons are the 2-3 specific
+// foods that drove it. This is an anomaly detector, not a daily grade.
+type DayAnomaly struct {
+	Headline string   `json:"headline"`
+	Reasons  []string `json:"reasons"`
 }
 
 // RangeDay is one day's as-eaten totals for the trends view.
@@ -251,4 +305,5 @@ type ExportDoc struct {
 	Meals      []Meal            `json:"meals"`
 	Favorites  []Favorite        `json:"favorites"`
 	Exercise   []ExerciseSession `json:"exercise"`
+	Canonical  []CanonicalFood   `json:"canonical_foods"`
 }

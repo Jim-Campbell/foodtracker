@@ -65,6 +65,15 @@ type NutrientAmount struct {
 	Unit  string  `json:"unit"`
 }
 
+// FoodPortion is a household-measure gram weight from FDC (e.g. "1 cup" ->
+// 140 g). Foundation/SR Legacy/Survey foods carry these; resolving a portion
+// to grams from this list (item 3) is what fixes the quarter-cup vs half-cup
+// class of error instead of letting the model guess grams.
+type FoodPortion struct {
+	Description string `json:"description"` // e.g. "1 cup", "1 medium"
+	GramWeight  int    `json:"gram_weight"`
+}
+
 // FDCFood is one FoodData Central search result, per 100g.
 type FDCFood struct {
 	FDCID           int              `json:"fdc_id"`
@@ -74,6 +83,7 @@ type FDCFood struct {
 	ServingSize     float64          `json:"serving_size,omitempty"`
 	ServingSizeUnit string           `json:"serving_size_unit,omitempty"`
 	Per100g         PerHundredGrams  `json:"per_100g"`
+	Portions        []FoodPortion    `json:"portions,omitempty"`
 	Nutrients       []NutrientAmount `json:"nutrients,omitempty"`
 }
 
@@ -96,6 +106,15 @@ type fdcSearchFood struct {
 	ServingSize     float64           `json:"servingSize"`
 	ServingSizeUnit string            `json:"servingSizeUnit"`
 	FoodNutrients   []fdcFoodNutrient `json:"foodNutrients"`
+	FoodMeasures    []fdcFoodMeasure  `json:"foodMeasures"`
+}
+
+// fdcFoodMeasure is one household-measure entry from the search response.
+// disseminationText is the human label ("1 cup"); gramWeight is its mass.
+type fdcFoodMeasure struct {
+	DisseminationText string  `json:"disseminationText"`
+	Modifier          string  `json:"modifier"`
+	GramWeight        float64 `json:"gramWeight"`
 }
 
 type fdcFoodNutrient struct {
@@ -116,10 +135,14 @@ func (c *FDCClient) Search(ctx context.Context, query string, pageSize int) ([]F
 	if pageSize > 10 {
 		pageSize = 10
 	}
+	// Data types in cascade order (item 3): Foundation + SR Legacy are the
+	// analytically rigorous whole-food tiers, Survey (FNDDS) covers composite /
+	// prepared / restaurant dishes ("salad bar", "fish tacos"), Branded is the
+	// packaged fallback. USDA's own relevance ranking orders the results.
 	reqBody, err := json.Marshal(fdcSearchRequest{
 		Query:    query,
 		PageSize: pageSize,
-		DataType: []string{"Foundation", "SR Legacy", "Branded"},
+		DataType: []string{"Foundation", "SR Legacy", "Survey (FNDDS)", "Branded"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal fdc request: %w", err)
@@ -190,6 +213,18 @@ func (c *FDCClient) Search(ctx context.Context, query string, pageSize int) ([]F
 				Name: n.NutrientName, Value: n.Value, Unit: n.UnitName,
 			})
 		}
+		for _, m := range f.FoodMeasures {
+			if m.GramWeight <= 0 {
+				continue
+			}
+			desc := m.DisseminationText
+			if desc == "" {
+				desc = m.Modifier
+			}
+			food.Portions = append(food.Portions, FoodPortion{
+				Description: desc, GramWeight: roundIntToInt(m.GramWeight),
+			})
+		}
 		foods = append(foods, food)
 	}
 	return foods, nil
@@ -201,4 +236,8 @@ func gramsToMg(grams float64) int64 {
 
 func roundInt(v float64) int64 {
 	return int64(math.Round(v))
+}
+
+func roundIntToInt(v float64) int {
+	return int(math.Round(v))
 }

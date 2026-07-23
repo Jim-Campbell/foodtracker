@@ -44,6 +44,15 @@ func ValidateItem(it MealItem) (errs []string, warnings []string) {
 	if it.Confidence != "" && !validConfidences[it.Confidence] {
 		errs = append(errs, fmt.Sprintf("invalid confidence: %q", it.Confidence))
 	}
+	if it.PortionSource != nil && !validPortionSources[*it.PortionSource] {
+		errs = append(errs, fmt.Sprintf("invalid portion_source: %q", *it.PortionSource))
+	}
+	if it.TierSource != nil && !validTierSources[*it.TierSource] {
+		errs = append(errs, fmt.Sprintf("invalid tier_source: %q", *it.TierSource))
+	}
+	if it.ResolutionTier != nil && (*it.ResolutionTier < 1 || *it.ResolutionTier > 4) {
+		errs = append(errs, fmt.Sprintf("invalid resolution_tier: %d", *it.ResolutionTier))
+	}
 	if it.FractionPct < 1 || it.FractionPct > 300 {
 		errs = append(errs, "fraction_pct must be between 1 and 300")
 	}

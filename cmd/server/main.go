@@ -112,7 +112,7 @@ func run(log *slog.Logger) error {
 		client := ai.NewClient(cfg.AnthropicKey, cfg.AIModel)
 		fdc := nutrition.NewFDCClient(cfg.FDCKey)
 		off := nutrition.NewOFFClient()
-		parser := ai.NewParser(client, fdc, off, cfg.AIVisionModel, cfg.AIWebSearch, log)
+		parser := ai.NewParser(client, fdc, off, database, cfg.AIVisionModel, cfg.AIWebSearch, log)
 		textParser = parser
 		imageParser = parser
 	}

@@ -2,6 +2,7 @@ package food
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -51,26 +52,48 @@ func TestExportAnalysis(t *testing.T) {
 	if d.Date != "2026-07-10" {
 		t.Errorf("Date = %q", d.Date)
 	}
-	if d.Calories != 200 {
-		t.Errorf("Calories = %d, want 200 (as-eaten)", d.Calories)
+	if d.Food == nil {
+		t.Fatalf("Food is nil, want food totals")
 	}
-	if d.ProteinG != 20 {
-		t.Errorf("ProteinG = %v, want 20", d.ProteinG)
+	if d.Food.Calories != 200 {
+		t.Errorf("Calories = %d, want 200 (as-eaten)", d.Food.Calories)
 	}
-	if d.QualityScore == nil || *d.QualityScore != 100 {
-		t.Errorf("QualityScore = %v, want 100", d.QualityScore)
+	if d.Food.ProteinG != 20 {
+		t.Errorf("ProteinG = %v, want 20", d.Food.ProteinG)
+	}
+	if d.Food.QualityScore == nil || *d.Food.QualityScore != 100 {
+		t.Errorf("QualityScore = %v, want 100", d.Food.QualityScore)
+	}
+	// protein 20 g * 4 = 80 kcal of 200 = 40.0%
+	if d.Food.ProteinPctCalories != 40 {
+		t.Errorf("ProteinPctCalories = %v, want 40", d.Food.ProteinPctCalories)
 	}
 	if d.WeightLb == nil || *d.WeightLb != 187.4 {
 		t.Errorf("WeightLb = %v, want 187.4", d.WeightLb)
+	}
+	if d.Exercise == nil {
+		t.Fatalf("Exercise is nil, want a summary")
 	}
 	if d.Exercise.CardioMin != 45 || d.Exercise.StrengthSessions != 1 || d.Exercise.ActiveMin != 45 {
 		t.Errorf("Exercise summary = %+v", d.Exercise)
 	}
 
-	if len(doc.Meals) != 1 {
-		t.Fatalf("Meals = %d, want 1", len(doc.Meals))
+	// Two dinner entries would collapse to one group; here it's a single entry,
+	// so one group and one raw entry.
+	if len(doc.MealGroups) != 1 {
+		t.Fatalf("MealGroups = %d, want 1", len(doc.MealGroups))
 	}
-	item := doc.Meals[0].Items[0]
+	g := doc.MealGroups[0]
+	if g.Slot != SlotDinner || g.OccasionIndex != 0 || g.EntryCount != 1 {
+		t.Errorf("group = %+v, want dinner occasion 0 entry_count 1", g)
+	}
+	if g.Calories != 200 || g.ProteinG != 20 {
+		t.Errorf("group as-eaten = %d kcal / %v g protein", g.Calories, g.ProteinG)
+	}
+	if len(doc.Entries) != 1 {
+		t.Fatalf("Entries = %d, want 1", len(doc.Entries))
+	}
+	item := doc.Entries[0].Items[0]
 	if item.Grams == nil || *item.Grams != 150 {
 		t.Errorf("item Grams = %v, want 150 (as-eaten)", item.Grams)
 	}
@@ -82,6 +105,66 @@ func TestExportAnalysis(t *testing.T) {
 	}
 	if len(doc.Weights) != 1 || doc.Weights[0].WeightLb != 187.4 {
 		t.Errorf("Weights = %+v", doc.Weights)
+	}
+
+	// Coverage: single-day data inside a 31-day range.
+	cov := doc.Meta.Coverage
+	if cov["food"].DaysWithData != 1 || cov["food"].DaysInRange != 31 {
+		t.Errorf("food coverage = %+v, want 1/31", cov["food"])
+	}
+	if cov["food"].FirstLogged == nil || *cov["food"].FirstLogged != "2026-07-10" {
+		t.Errorf("food first_logged = %v, want 2026-07-10", cov["food"].FirstLogged)
+	}
+	// Food/exercise/weight all began after range start (2026-07-01) => warnings.
+	foundExWarn := false
+	for _, w := range doc.AnalysisWarnings {
+		if strings.Contains(w, "Exercise logging began 2026-07-10") {
+			foundExWarn = true
+		}
+	}
+	if !foundExWarn {
+		t.Errorf("expected an exercise-began warning, got %v", doc.AnalysisWarnings)
+	}
+}
+
+// TestExportAnalysisMealGroups checks that multiple entries in the same slot on
+// the same day collapse into one meal group (entry_count reflects logging, not
+// eating frequency), while snacks split into occasions by time gap.
+func TestExportAnalysisMealGroups(t *testing.T) {
+	svc := newTestService()
+	ctx := context.Background()
+
+	// Breakfast logged as three separate entries — one meal group, entry_count 3.
+	for i := 0; i < 3; i++ {
+		m := &Meal{
+			Day: "2026-07-10", Slot: strPtr(SlotBreakfast),
+			Description: "egg dish",
+			Items:       []MealItem{{Name: "eggs", Calories: 100, ProteinMg: 10000, Tier: TierHardYes, FractionPct: 100}},
+		}
+		if err := svc.CreateMeal(ctx, m); err != nil {
+			t.Fatalf("CreateMeal breakfast %d: %v", i, err)
+		}
+	}
+
+	doc, err := svc.ExportAnalysis(ctx, "2026-07-10", "2026-07-10")
+	if err != nil {
+		t.Fatalf("ExportAnalysis: %v", err)
+	}
+	if len(doc.MealGroups) != 1 {
+		t.Fatalf("MealGroups = %d, want 1 (three entries collapse)", len(doc.MealGroups))
+	}
+	g := doc.MealGroups[0]
+	if g.EntryCount != 3 {
+		t.Errorf("EntryCount = %d, want 3", g.EntryCount)
+	}
+	if g.Calories != 300 {
+		t.Errorf("group Calories = %d, want 300 (3 entries summed)", g.Calories)
+	}
+	if len(g.Descriptions) != 3 {
+		t.Errorf("Descriptions = %v, want 3", g.Descriptions)
+	}
+	if len(doc.Entries) != 3 {
+		t.Errorf("Entries = %d, want 3 (raw entries preserved)", len(doc.Entries))
 	}
 }
 

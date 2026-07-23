@@ -35,6 +35,13 @@ type Store interface {
 	// empty. Used to default the analysis export to the full logged range.
 	DataRange(ctx context.Context) (start, end string, ok bool, err error)
 
+	// Canonical foods (item 3): the accretion cache. UpsertCanonical writes by
+	// normalized name (overwriting an existing entry so corrections propagate
+	// forward); LookupCanonical fetches by normalized name (nil when absent).
+	UpsertCanonical(ctx context.Context, c *CanonicalFood) error
+	LookupCanonical(ctx context.Context, normalizedName string) (*CanonicalFood, error)
+	ListAllCanonical(ctx context.Context) ([]CanonicalFood, error)
+
 	CreateExercise(ctx context.Context, e *ExerciseSession) error
 	GetExercise(ctx context.Context, id int64) (*ExerciseSession, error)
 	UpdateExercise(ctx context.Context, e *ExerciseSession) error

@@ -2,9 +2,11 @@ package nutrition
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -14,10 +16,12 @@ func TestFDCSearchUnitConversion(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
+	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
+		gotBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(fixture)
 	}))
@@ -64,5 +68,10 @@ func TestFDCSearchUnitConversion(t *testing.T) {
 	}
 	if len(f.Nutrients) == 0 {
 		t.Error("expected raw nutrients to be kept for micros")
+	}
+	// The Survey (FNDDS) tier must be requested (item 3) so composite/prepared
+	// dishes resolve instead of forcing an LLM estimate.
+	if !strings.Contains(string(gotBody), "Survey (FNDDS)") {
+		t.Errorf("request body did not ask for the Survey (FNDDS) data type: %s", gotBody)
 	}
 }
