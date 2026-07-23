@@ -189,6 +189,31 @@ func (d *DB) ListAllMeals(ctx context.Context) ([]food.Meal, error) {
 	return d.queryMeals(ctx, "TRUE", nil)
 }
 
+// ListMealsRange returns meals with items for the inclusive [start, end] day
+// range, ordered by day — the analysis export's source for meal detail.
+func (d *DB) ListMealsRange(ctx context.Context, start, end string) ([]food.Meal, error) {
+	return d.queryMeals(ctx, "m.day >= $1::date AND m.day <= $2::date", []any{start, end})
+}
+
+// DataRange returns the earliest and latest day carrying any data (a meal,
+// weigh-in, or exercise session). ok is false when there is none.
+func (d *DB) DataRange(ctx context.Context) (string, string, bool, error) {
+	var minDay, maxDay *time.Time
+	err := d.pool.QueryRow(ctx, `
+		SELECT MIN(day), MAX(day) FROM (
+			SELECT day FROM meals
+			UNION ALL SELECT day FROM weights
+			UNION ALL SELECT day FROM exercise_sessions
+		) t`).Scan(&minDay, &maxDay)
+	if err != nil {
+		return "", "", false, fmt.Errorf("data range: %w", err)
+	}
+	if minDay == nil || maxDay == nil {
+		return "", "", false, nil
+	}
+	return minDay.Format("2006-01-02"), maxDay.Format("2006-01-02"), true, nil
+}
+
 func (d *DB) UpdateMeal(ctx context.Context, m *food.Meal) error {
 	tx, err := d.pool.Begin(ctx)
 	if err != nil {

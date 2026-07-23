@@ -48,6 +48,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Put("/settings", h.updateSettings)
 
 	r.Get("/export", h.export)
+	r.Get("/export/range", h.exportRange)
+	r.Get("/export/analysis", h.exportAnalysis)
 
 	h.exerciseRoutes(r)
 }
@@ -307,6 +309,55 @@ func (h *Handler) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := "food-export-" + time.Now().UTC().Format("20060102") + ".json"
+	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
+	writeJSON(w, http.StatusOK, doc)
+}
+
+// exportRange reports the earliest and latest logged day so the PWA can
+// default the analysis-export date pickers to the full range. Returns {} when
+// there is no data yet.
+func (h *Handler) exportRange(w http.ResponseWriter, r *http.Request) {
+	start, end, ok, err := h.svc.DataRange(r.Context())
+	if err != nil {
+		h.fail(w, "export range", err)
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]string{})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"start": start, "end": end})
+}
+
+// exportAnalysis returns the reshaped, LLM-ready export for a day range.
+// Missing start/end default to the full logged range (today if the DB is
+// empty), so the endpoint is useful with no query params at all.
+func (h *Handler) exportAnalysis(w http.ResponseWriter, r *http.Request) {
+	start := r.URL.Query().Get("start")
+	end := r.URL.Query().Get("end")
+	if start == "" || end == "" {
+		ds, de, ok, err := h.svc.DataRange(r.Context())
+		if err != nil {
+			h.fail(w, "export range", err)
+			return
+		}
+		if !ok {
+			today := time.Now().UTC().Format("2006-01-02")
+			ds, de = today, today
+		}
+		if start == "" {
+			start = ds
+		}
+		if end == "" {
+			end = de
+		}
+	}
+	doc, err := h.svc.ExportAnalysis(r.Context(), start, end)
+	if err != nil {
+		h.fail(w, "export analysis", err)
+		return
+	}
+	filename := fmt.Sprintf("food-analysis-%s_%s.json", start, end)
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	writeJSON(w, http.StatusOK, doc)
 }

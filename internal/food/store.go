@@ -27,7 +27,13 @@ type Store interface {
 	RangeSummary(ctx context.Context, start, end string) ([]RangeDay, error)
 
 	ListAllMeals(ctx context.Context) ([]Meal, error)
+	ListMealsRange(ctx context.Context, start, end string) ([]Meal, error)
 	ListAllWeights(ctx context.Context) ([]Weight, error)
+
+	// DataRange reports the earliest and latest day that carries any data
+	// (a meal, weigh-in, or exercise session). ok is false when the DB is
+	// empty. Used to default the analysis export to the full logged range.
+	DataRange(ctx context.Context) (start, end string, ok bool, err error)
 
 	CreateExercise(ctx context.Context, e *ExerciseSession) error
 	GetExercise(ctx context.Context, id int64) (*ExerciseSession, error)

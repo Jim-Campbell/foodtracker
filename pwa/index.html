@@ -117,12 +117,15 @@ input[type=text], input[type=number], input[type=date] {
 .leg { font-size: .8rem; line-height: 1.5; display: flex; align-items: center; gap: 6px; }
 .legdot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 /* training card — one row per activity: icon, 7 day-boxes (Mon–Sun), goal circles */
-.trainweek { display: grid; grid-template-columns: 32px repeat(7, 26px) auto; column-gap: 3px; row-gap: 13px; align-items: center; position: relative; margin-top: 4px; justify-content: start; }
+/* icon is pinned to the left; a flexible spacer on each side of the day-box +
+   circles cluster keeps that cluster centered in the leftover width. */
+.trainweek { display: grid; grid-template-columns: 32px minmax(14px, 1fr) repeat(7, 26px) auto minmax(0, 1fr); column-gap: 3px; row-gap: 13px; align-items: center; position: relative; margin-top: 4px; }
 .trainweek > :not(.ti-lane) { position: relative; z-index: 1; }
-/* pale grey vertical lane behind today's column (a touch wider than the boxes, no
+.ti-sp { pointer-events: none; }
+/* pale vertical lane behind today's column (a touch wider than the boxes, no
    border). Geometry is set by positionTodayLane() after render — grid can't be
    trusted to size an absolutely-positioned item to a single column track. */
-.ti-lane { position: absolute; background: var(--chip); border-radius: 8px; z-index: 0; }
+.ti-lane { position: absolute; background: var(--chip); border-radius: 8px; z-index: 0; opacity: .55; }
 .ti-icon { width: 32px; height: 32px; border-radius: 9px; background: var(--chip); display: flex; align-items: center; justify-content: center; font-size: 1.02rem; cursor: pointer; }
 .ti-icon.met { background: var(--green-tint); }
 .ti-hdr { font-size: 11px; color: var(--muted); text-align: center; }
@@ -389,10 +392,10 @@ function positionTodayLane() {
   const lane = tw.querySelector('.ti-lane'); if (!lane) return;
   const box = tw.querySelectorAll('.ti-box')[Number(lane.dataset.day)]; if (!box) return;
   const tr = tw.getBoundingClientRect(), br = box.getBoundingClientRect();
-  lane.style.left = (br.left - tr.left - 4) + 'px';
-  lane.style.width = (br.width + 8) + 'px';
-  lane.style.top = '-3px';
-  lane.style.height = (tr.height + 6) + 'px';
+  lane.style.left = (br.left - tr.left - 3) + 'px';
+  lane.style.width = (br.width + 6) + 'px';
+  lane.style.top = '-1px';
+  lane.style.height = (tr.height + 2) + 'px';
 }
 window.addEventListener('resize', positionTodayLane);
 
@@ -655,7 +658,7 @@ function trainRowHTML(t, days) {
     ? `<div class="ti-circles" style="color:var(${t.color})">${'<span class="ti-circle"></span>'.repeat(left)}</div>`
     : `<div class="ti-circles"></div>`;
   return `<div class="ti-icon${met ? ' met' : ''}" title="${t.label}" onclick="quickLogSheet('${t.key}')">${t.icon}</div>
-    ${boxes}${circles}`;
+    <div class="ti-sp"></div>${boxes}${circles}<div class="ti-sp"></div>`;
 }
 function trainingCardHTML() {
   if (!S.exercise) return `<div class="card"><h3>Training · this week</h3><div class="muted sm">Loading…</div></div>`;
@@ -663,9 +666,9 @@ function trainingCardHTML() {
   const days = []; for (let i = 0; i < 7; i++) days.push(addDays(ws, i));
   const todayIdx = daysBetween(ws, S.day); // 0..6, Mon-based
   const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-  const header = `<div></div>` +
+  const header = `<div></div><div class="ti-sp"></div>` +
     letters.map((l, i) => `<div class="ti-hdr${i === todayIdx ? ' tdy' : ''}">${l}</div>`).join('') +
-    `<div class="ti-hdr" style="text-align:left;margin-left:8px">left</div>`;
+    `<div class="ti-hdr" style="text-align:left;margin-left:8px">left</div><div class="ti-sp"></div>`;
   const rows = TRAIN_ROWS.map(t => trainRowHTML(t, days)).join('');
   const legend = `<div class="ti-legend"><span style="font-weight:500">Cardio</span>` +
     `<span class="lgi">🏃 Run</span><span class="lgi">🚴 Ride</span>` +
@@ -1726,7 +1729,9 @@ function renderSettings(m) {
     </div>
     <div class="card">
       <h2>Data</h2>
-      <button class="btn" onclick="downloadExport()">Export JSON</button>
+      <p class="muted sm" style="margin:2px 0 10px">Download your log to analyze in a Claude chat — a JSON file plus a daily CSV, in units ready to paste in. Or grab a full backup.</p>
+      <button class="btn" onclick="openAnalysisExport()">Export for analysis…</button>
+      <button class="btn ghost" style="margin-top:8px" onclick="downloadExport()">Full backup (JSON)</button>
     </div>
     <div class="card">
       <h2>Account</h2>
@@ -1759,9 +1764,67 @@ async function downloadExport() {
     const res = await fetch('/api/export', { headers: { Authorization: 'Bearer ' + apiKey() } });
     if (!res.ok) { toast(res.status === 404 ? 'Export not available yet' : 'Export failed'); return; }
     const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = 'food-export.json'; a.click(); URL.revokeObjectURL(a.href);
+    downloadBlob(blob, 'food-export.json');
   } catch (e) { toast('Error: ' + e.message); }
+}
+function downloadBlob(content, filename, type) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: type || 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+// Analysis export: pick a date range (defaulted to the full logged range) and
+// download a JSON + a companion daily CSV, both in Claude-ready display units.
+async function openAnalysisExport() {
+  let range = {};
+  try { range = await api('/export/range'); } catch {}
+  const fallback = S.day || new Date().toISOString().slice(0, 10);
+  const start = range.start || fallback;
+  const end = range.end || fallback;
+  openDialog(`
+    <h3>Export for analysis</h3>
+    <p class="muted sm" style="margin:4px 0 12px">Downloads a JSON file and a daily-summary CSV for the range below — nutrition, quality scores, weight and training, ready to paste into a Claude chat.</p>
+    <label class="f">From</label>
+    <input type="date" id="expStart" value="${start}" ${range.start ? `min="${range.start}"` : ''} max="${end}">
+    <label class="f">To</label>
+    <input type="date" id="expEnd" value="${end}" min="${start}" ${range.end ? `max="${range.end}"` : ''}>
+    <div class="dlg-actions">
+      <button class="btn ghost" onclick="closeDialog()">Cancel</button>
+      <button class="btn primary" onclick="runAnalysisExport()">Download</button>
+    </div>`);
+}
+async function runAnalysisExport() {
+  const start = $('#expStart').value, end = $('#expEnd').value;
+  if (!start || !end) { toast('Pick both dates'); return; }
+  if (start > end) { toast('Start date is after end date'); return; }
+  try {
+    const doc = await api(`/export/analysis?start=${start}&end=${end}`);
+    if (!(doc.days && doc.days.length) && !(doc.meals && doc.meals.length)) { toast('No data in that range'); return; }
+    const base = `food-analysis-${start}_${end}`;
+    downloadBlob(JSON.stringify(doc, null, 2), base + '.json', 'application/json');
+    // stagger the second download so the browser doesn't suppress it
+    setTimeout(() => downloadBlob(daysToCSV(doc.days || []), base + '.csv', 'text/csv'), 250);
+    closeDialog();
+    toast('Downloaded JSON + CSV');
+  } catch (e) { toast('Error: ' + e.message); }
+}
+// Flatten the per-day rollup into a CSV (nutrition + exercise summary + weight).
+// Every value is a number, date, or blank, so no quoting/escaping is needed.
+function daysToCSV(days) {
+  const cols = ['date', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'sat_fat_g', 'sugar_g',
+    'sodium_mg', 'quality_score', 'calorie_target', 'weight_lb',
+    'cardio_min', 'strength_sessions', 'yoga_min', 'meditation_min', 'pt_min', 'active_min'];
+  const rows = [cols.join(',')];
+  for (const d of days) {
+    const ex = d.exercise || {};
+    rows.push([
+      d.date, d.calories, d.protein_g, d.carbs_g, d.fat_g, d.fiber_g, d.sat_fat_g, d.sugar_g, d.sodium_mg,
+      d.quality_score == null ? '' : d.quality_score, d.calorie_target,
+      d.weight_lb == null ? '' : d.weight_lb,
+      ex.cardio_min || 0, ex.strength_sessions || 0, ex.yoga_min || 0, ex.meditation_min || 0, ex.pt_min || 0, ex.active_min || 0,
+    ].join(','));
+  }
+  return rows.join('\n') + '\n';
 }
 function resetKey() { localStorage.removeItem('food_key'); location.reload(); }
 

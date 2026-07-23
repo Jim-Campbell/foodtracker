@@ -219,6 +219,9 @@ GET    /api/settings
 PUT    /api/settings        {calorie_target, protein_target_mg, weight_target_g}
 
 GET    /api/export          → full-DB JSON download (meals+items+weights+favorites+settings)
+GET    /api/export/range     → {start, end} earliest/latest logged day ({} if empty)
+GET    /api/export/analysis?start=&end=  → reshaped LLM-ready JSON download (dates
+                               default to the full logged range)
 ```
 
 The two parse endpoints stream progress so the PWA can narrate the wait
@@ -356,7 +359,13 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   the finance convention of being honest about the in-progress day/month —
   averages count only completed days.
 - **Settings.** Calorie target, protein target (entered in grams, stored mg),
-  goal weight (entered lb, stored grams), export-JSON download link, build/version.
+  goal weight (entered lb, stored grams), weekly training targets, a Data card
+  (analysis export + full backup), build/version. The **analysis export** opens
+  a date-range dialog (pickers defaulted to `/api/export/range`) and downloads
+  two files: the `/api/export/analysis` JSON plus a daily-summary CSV the PWA
+  generates client-side from the JSON's `days` rollup. Both are in display
+  units (grams, lb, kcal) and as-eaten values — purpose-built for pasting into
+  a Claude chat, distinct from the raw full-DB backup at `/api/export`.
 - PWA installability: `manifest.json`, minimal `sw.js` (network-first for the
   shell with cache fallback for offline — deploys show on the next reload with
   no version bump; network-only for API), apple-touch-icon. API key stored in

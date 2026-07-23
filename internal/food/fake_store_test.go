@@ -168,6 +168,41 @@ func (f *fakeStore) ListAllMeals(ctx context.Context) ([]Meal, error) {
 	return out, nil
 }
 
+func (f *fakeStore) ListMealsRange(ctx context.Context, start, end string) ([]Meal, error) {
+	var out []Meal
+	for _, m := range f.meals {
+		if m.Day >= start && m.Day <= end {
+			out = append(out, *m)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DataRange(ctx context.Context) (string, string, bool, error) {
+	var minDay, maxDay string
+	consider := func(d string) {
+		if minDay == "" || d < minDay {
+			minDay = d
+		}
+		if d > maxDay {
+			maxDay = d
+		}
+	}
+	for _, m := range f.meals {
+		consider(m.Day)
+	}
+	for day := range f.weights {
+		consider(day)
+	}
+	for _, e := range f.exercise {
+		consider(e.Day)
+	}
+	if minDay == "" {
+		return "", "", false, nil
+	}
+	return minDay, maxDay, true, nil
+}
+
 func (f *fakeStore) ListAllWeights(ctx context.Context) ([]Weight, error) {
 	var out []Weight
 	for _, w := range f.weights {
