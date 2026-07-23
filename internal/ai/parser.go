@@ -296,7 +296,7 @@ func (p *Parser) executeTool(ctx context.Context, block blockMeta, cache microsC
 	case toolUSDASearch:
 		return p.execUSDASearch(ctx, block, cache, resolved, search, emit)
 	case toolOFFBarcode:
-		return p.execOFFBarcode(ctx, block, cache, emit)
+		return p.execOFFBarcode(ctx, block, cache, resolved, emit)
 	case toolCanonicalLookup:
 		return p.execCanonicalLookup(ctx, block, resolved, emit)
 	default:
@@ -390,7 +390,7 @@ func (p *Parser) execUSDASearch(ctx context.Context, block blockMeta, cache micr
 	return ToolResultBlock(block.ID, string(body), false)
 }
 
-func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache microsCache, emit Progress) json.RawMessage {
+func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache microsCache, resolved resolvedCache, emit Progress) json.RawMessage {
 	var in struct {
 		Code string `json:"code"`
 	}
@@ -411,15 +411,40 @@ func (p *Parser) execOFFBarcode(ctx context.Context, block blockMeta, cache micr
 			"off_barcode found nothing for %q: %v -- barcode digits are easy to misread. Re-read the printed numerals under the bars digit by digit (UPC-A has 12) and try off_barcode ONCE more if you read them differently. If it still fails, %s.",
 			in.Code, err, fallback), true)
 	}
-	p.log.Info("off_barcode", "code", in.Code, "dur_ms", time.Since(t0).Milliseconds())
+	p.log.Info("off_barcode", "code", in.Code, "found", product.Name, "has_nutrition", hasNutrition(product.Per100g), "dur_ms", time.Since(t0).Milliseconds())
+
+	// A hit with no usable nutrition (common for US supplements in OFF) must not
+	// resolve to zeros: the app computes usda/off numbers from the cached
+	// per-100g, so an empty per-100g would store 0 cal. Send the model to the
+	// label/estimate path where it supplies the numbers itself.
+	if !hasNutrition(product.Per100g) {
+		fallback := "read the nutrition label if it's visible, otherwise estimate from your knowledge of the product"
+		if p.webSearch {
+			fallback = "read the nutrition label if visible, otherwise use web_search for the brand's published nutrition (or estimate as a last resort)"
+		}
+		return ToolResultBlock(block.ID, fmt.Sprintf(
+			"off_barcode identified %q but Open Food Facts has NO nutrition data for it. Do NOT set source 'off' -- %s, and provide the calorie and macro values yourself (source 'label', 'web', or 'ai').",
+			product.Name, fallback), false)
+	}
+
 	if len(product.RawNutriments) > 0 {
 		cache[food.SourceOFF+":"+in.Code] = product.RawNutriments
 	}
+	// Cache per-100g so finish() computes the item's nutrition from the label
+	// (per-100g * grams / 100), exactly as the usda path does -- the model
+	// omits the macro fields for off items.
+	resolved[food.SourceOFF+":"+in.Code] = product.Per100g
+
 	body, err := json.Marshal(product) // RawNutriments is json:"-", so the model gets the slim view
 	if err != nil {
 		return ToolResultBlock(block.ID, fmt.Sprintf("failed to encode off_barcode result: %v", err), true)
 	}
 	return ToolResultBlock(block.ID, string(body), false)
+}
+
+// hasNutrition reports whether an OFF per-100g carries any usable macro data.
+func hasNutrition(p nutrition.PerHundredGrams) bool {
+	return p.Calories > 0 || p.ProteinMg > 0 || p.CarbsMg > 0 || p.FatMg > 0
 }
 
 // finish validates every item (Atwater warnings and enum/range errors both

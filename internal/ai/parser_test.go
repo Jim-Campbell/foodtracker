@@ -42,11 +42,15 @@ func (f *fakeUSDA) Search(ctx context.Context, query string, pageSize int) ([]nu
 }
 
 type fakeOFF struct {
-	called bool
+	called  bool
+	product *nutrition.Product
 }
 
 func (f *fakeOFF) Lookup(ctx context.Context, barcode string) (*nutrition.Product, error) {
 	f.called = true
+	if f.product != nil {
+		return f.product, nil
+	}
 	return &nutrition.Product{Name: "test product"}, nil
 }
 
@@ -284,6 +288,84 @@ func TestParserResolvesNutritionFromFDC(t *testing.T) {
 	}
 	if it.TierSource == nil || *it.TierSource != food.TierSourceTable {
 		t.Errorf("TierSource = %v, want the table default", it.TierSource)
+	}
+}
+
+// TestParserResolvesOFFNutrition: a barcode item's calories/macros are computed
+// by the app from the Open Food Facts per-100g × grams — the model omits them,
+// exactly like the usda path (regression: barcode items used to save as 0).
+func TestParserResolvesOFFNutrition(t *testing.T) {
+	code := "851770008631"
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolOFFBarcode, map[string]any{"code": code})},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "Orgain protein"
+					it.Source = food.SourceOFF
+					it.SourceRef = &code
+					g := 50
+					it.Grams = &g
+					it.Calories, it.ProteinMg, it.FatMg = 0, 0, 0 // model omitted; app computes
+				})},
+			})},
+		},
+	}}
+	off := &fakeOFF{product: &nutrition.Product{
+		Name:    "Orgain Organic Protein",
+		Per100g: nutrition.PerHundredGrams{Calories: 370, ProteinMg: 42000, CarbsMg: 30000, FatMg: 10000, SatFatMg: 2000, SodiumMg: 400},
+	}}
+
+	p := NewParser(messenger, &fakeUSDA{}, off, nil, "", false, slog.Default())
+	result, err := p.ParseText(context.Background(), "orgain shake", "2026-07-23", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	it := result.Items[0]
+	if it.Calories != 185 { // 370 per 100g * 50 g
+		t.Errorf("Calories = %d, want 185 (OFF per-100g * grams), not 0", it.Calories)
+	}
+	if it.ProteinMg != 21000 {
+		t.Errorf("ProteinMg = %d, want 21000", it.ProteinMg)
+	}
+}
+
+// TestParserOFFNoNutritionFallsBack: a barcode hit with no OFF nutrition data
+// must not resolve to zeros — the tool result steers the model off the 'off'
+// source so it supplies the numbers itself.
+func TestParserOFFNoNutritionFallsBack(t *testing.T) {
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolOFFBarcode, map[string]any{"code": "000"})},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) { it.Source = food.SourceAI })},
+			})},
+		},
+	}}
+	// Default fakeOFF product has an empty per-100g (no nutrition).
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", false, slog.Default())
+	if _, err := p.ParseText(context.Background(), "some bar", "2026-07-23", nil); err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	// The round-2 request carries the barcode tool_result; it must tell the model
+	// not to use 'off'.
+	msgs := messenger.calls[1].Messages
+	var tr struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(msgs[len(msgs)-1].Content[0], &tr); err != nil {
+		t.Fatalf("decode tool_result: %v", err)
+	}
+	if !strings.Contains(tr.Content, "NO nutrition data") || !strings.Contains(tr.Content, "Do NOT set source 'off'") {
+		t.Errorf("no-nutrition tool result = %q, want it to steer off the 'off' source", tr.Content)
 	}
 }
 
