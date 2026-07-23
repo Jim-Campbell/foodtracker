@@ -13,14 +13,30 @@ sophisticated analyses can be run later.
 1. Jim describes food in casual natural language — typed, dictated (Web Speech
    API, same as journal), or photographed (label, package, barcode, or plate),
    optionally with a hint like "I had half of this".
-2. Claude parses it into food items, looks up nutrition (USDA FoodData Central,
-   Open Food Facts for barcodes, AI estimate as fallback), and classifies each
-   item against `docs/diet-framework.md`.
-3. The PWA shows a **draft preview card** — items, grams, calories, macros —
-   Jim adjusts portions with fraction chips if needed and taps Save.
-4. Today screen leads with **calories remaining**, **protein to go**, and the
-   day's **quality score**. Trends show daily bars for week/month plus the
-   weight chart.
+2. Claude **parses** the text into `(food, quantity)` pairs and **picks** the
+   best FoodData Central entry per food; the app looks the nutrition up and
+   does the arithmetic — the model never emits a macro value (see "Resolution
+   layer"). Each food is classified against `docs/diet-framework.md`.
+3. The PWA shows a **draft preview card** — one row per food with grams,
+   calories, macros, and a confirm-the-match line (which database entry backed
+   it, one-tap alternatives). Jim adjusts per-food portions and taps Save.
+4. Save **appends the foods to the day's slot** (breakfast/lunch/dinner/snack).
+   The slot is the *meal*; the *food* is the first-class unit (see "Data
+   model"). Today screen leads with **calories remaining**, **protein to go**,
+   the **quality score**, and a **saturated-fat** ceiling; an outlier line
+   surfaces on an off day. Trends show daily bars for week/month plus weight.
+
+## Data model — Food and Meal
+
+The stored, first-class unit is the **Food** (`meal_items` row): a single item
+with its own nutrition, portion, quality tier, resolution provenance, photo,
+and logging metadata. A **Meal** is the **(day, slot) container** — one
+Breakfast/Lunch/Dinner/Snack per day (unique on `(day, COALESCE(slot,''))`),
+holding foods but carrying no nutrition of its own. Logging *appends* foods to
+a slot; opening a slot shows the flat list of every food in it regardless of
+when or how it was added. This matches how the analysis export has always
+grouped — by `(date, slot)`. (Migration 012 moved the app to this model;
+before it, a "meal" was a single logging entry with N items.)
 
 ## Tech stack
 
@@ -70,13 +86,20 @@ sophisticated analyses can be run later.
   the composite score; tapping the score badge opens the day's per-item tier
   breakdown (tier, reason, calorie share). Tiers stay in the DB for later
   analysis.
-- **Keep every AI parse's raw output** (`meals.ai_raw JSONB`) and every
-  nutrition source's full nutrient payload (`meal_items.micros JSONB`) — the
-  point is a database rich enough for future analyses.
+- **Keep every AI parse's raw output** (`meal_items.ai_raw JSONB`, per food
+  since migration 012) and every nutrition source's full nutrient payload
+  (`meal_items.micros JSONB`) — the point is a database rich enough for future
+  analyses.
+- **The model parses; the code does the arithmetic.** For a food resolved
+  through FoodData Central or a barcode, the model returns the chosen entry's
+  id and a portion in grams — never calorie/macro numbers. Go computes every
+  amount as `per_100g × grams / 100` from the looked-up entry (see "Resolution
+  layer"). The model only supplies numbers for the last-resort LLM-estimate /
+  label / web tiers.
 - **The AI never writes to the database.** The parse endpoints return a draft;
   only an explicit save request persists anything. Server-side validation
-  recomputes all derived numbers and sanity-checks AI output before returning
-  a draft (see "Validation" below).
+  recomputes derived numbers and sanity-checks the draft first (see
+  "Validation").
 
 ## Quality score
 
@@ -94,7 +117,13 @@ Worked example: 500 kcal salmon+greens dinner (hard_yes) + 300 kcal white-flour
 roll (soft_no) + 200 kcal Greek yogurt (soft_yes) →
 `(500×100 + 300×25 + 200×75) / 1000 = 72`.
 
-## Database schema (migration 001)
+## Database schema
+
+The initial schema is below (migration 001). Migrations 009–012 evolved it
+substantially — see **Schema evolution** after the favorites table. Most
+notably `meals` is now the (day, slot) container (its per-food columns —
+`description`, `input_kind`, `photo_*`, `ai_*`, `eaten_at` — moved onto
+`meal_items`), and `meal_items` gained resolution-provenance columns.
 
 ```sql
 CREATE TABLE meals (
@@ -162,23 +191,44 @@ CREATE TABLE settings (                            -- single row, id=1
 INSERT INTO settings (id) VALUES (1);
 ```
 
-Migration 002 adds **favorites** — reusable meal templates. Items are a JSONB
+Migration 002 adds **favorites** — reusable templates. Items are a JSONB
 snapshot (same shape as `meal_items`), not references, so editing or deleting
-the original meal never mutates a favorite. Migration 003 makes names unique
-(case-insensitive); `POST /api/favorites` upserts by name, so re-favoriting
-replaces the template instead of duplicating it. The PWA decides whether a
-meal "is favorited" by matching item content (name/calories/fraction
-fingerprint) against the favorites list, shows ★ on matching meal rows, and
-renders the edit-dialog button as a ★ Favorited toggle (tap to unfavorite):
+the original never mutates a favorite. Migration 003 makes names unique
+(case-insensitive); `POST /api/favorites` upserts by name. Migration 012 adds a
+`kind` (`food` | `meal`): a single food or a whole slot's collection. The
+favorites sheet splits into **Foods** and **Meals** sections; the PWA marks a
+food/meal "favorited" by matching item content (name/calories/fraction
+fingerprint) against the list.
 
 ```sql
 CREATE TABLE favorites (
     id         BIGSERIAL PRIMARY KEY,
     name       TEXT NOT NULL,
+    kind       TEXT NOT NULL DEFAULT 'meal'      -- 'food' (single) | 'meal' (collection), migration 012
+               CHECK (kind IN ('food','meal')),
     items      JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
+
+### Schema evolution (migrations 009–012)
+
+- **009 — resolution provenance** on `meal_items`: `fdc_id`, `fdc_data_type`
+  (`Branded`|`Foundation`|`SR Legacy`|`Survey (FNDDS)`), `resolution_tier`
+  (1–4), `portion_source` (`weighed`|`package_unit`|`estimated`), `tier_source`
+  (`table`|`cascade`). All nullable — legacy rows honestly read "unknown".
+- **010 — `settings.sat_fat_target_mg`** (default 14000): the saturated-fat
+  ceiling, tracked like the calorie target.
+- **011 — `canonical_foods`**: the accretion cache. A resolved food's per-100g
+  nutrition + tier + provenance are written here keyed on a normalized name and
+  reused on later logs, so a food never re-resolves; corrections overwrite the
+  entry (propagate forward, history untouched). Has `protected`/`protected_reason`
+  columns as groundwork for the backlog "protected foods" feature.
+- **012 — food-first-class**: moved `description`/`input_kind`/`photo_*`/`ai_*`/
+  `eaten_at` off `meals` onto `meal_items`; merged entries sharing a
+  `(day, slot)` into one container; added the unique index
+  `(day, COALESCE(slot,''))` and `favorites.kind`. The existing ~2 weeks of data
+  were flattened in place.
 
 ## API
 
@@ -193,16 +243,20 @@ POST   /api/photos          multipart image                   → {key, url}   (
 POST   /api/analyze-photo   {key, hint, day}                  → NDJSON stream (see below); hint carries
                                                                  "half of this", "just the salmon", etc.
 
-POST   /api/meals           {day, slot, description, input_kind, photo_key,
-                             photo_url, ai_model, ai_raw, items:[Item]}   → Meal (saves a confirmed draft)
-GET    /api/meals?day=YYYY-MM-DD                              → [Meal with items]
-GET    /api/meals/{id}                                        → Meal with items
-PUT    /api/meals/{id}      same shape as POST                → Meal (replaces items)
-DELETE /api/meals/{id}
+POST   /api/foods           {day, slot, items:[Food]}         → Meal (appends foods to the
+                                                                 day's slot container; each food
+                                                                 carries its own photo/input_kind/ai_raw)
+GET    /api/foods/{id}                                        → Food
+PUT    /api/foods/{id}      {day, slot, ...Food}              → Food (edits; a new slot moves it)
+DELETE /api/foods/{id}                                        → 204 (prunes the container if emptied)
+GET    /api/meals?day=YYYY-MM-DD                              → [Meal (container) with foods]
+GET    /api/meals/{id}                                        → Meal with foods
+DELETE /api/meals/{id}                                        → 204 (clears the whole slot)
 
-GET    /api/day/{date}      → {day, calories, protein_mg, carbs_mg, fat_mg, fiber_mg,
-                               score, calorie_target, protein_target_mg,
-                               calories_remaining, protein_remaining_mg, meals:[...]}
+GET    /api/day/{date}      → {day, calories, protein_mg, carbs_mg, fat_mg, fiber_mg, sat_fat_mg,
+                               score, calorie_target, protein_target_mg, sat_fat_target_mg,
+                               calories_remaining, protein_remaining_mg,
+                               anomaly:{headline,reasons}|null, meals:[...]}
 GET    /api/range?start=&end=  → [{day, calories, protein_mg, carbs_mg, fat_mg, score,
                                    over_target bool}]   -- one row per day with data
 
@@ -210,13 +264,13 @@ POST   /api/weights         {day, weight_g, note}             → upsert by day
 GET    /api/weights?start=&end=                               → [{day, weight_g, note}]
 DELETE /api/weights/{day}
 
-POST   /api/favorites       {name, items:[Item]}               → Favorite (named meal template; upserts by name)
+POST   /api/favorites       {name, kind, items:[Food]}         → Favorite (food|meal; upserts by name)
 GET    /api/favorites                                          → [Favorite], ordered by name
 PUT    /api/favorites/{id}  {name}                             → 204 (rename; 400 if the name is taken)
 DELETE /api/favorites/{id}
 
 GET    /api/settings
-PUT    /api/settings        {calorie_target, protein_target_mg, weight_target_g}
+PUT    /api/settings        {calorie_target, protein_target_mg, sat_fat_target_mg, weight_target_g}
 
 GET    /api/export          → full-DB JSON download (meals+items+weights+favorites+settings)
 GET    /api/export/range     → {start, end} earliest/latest logged day ({} if empty)
@@ -234,22 +288,66 @@ are still plain JSON errors before the stream starts. The PWA reads the
 stream with `fetch` + `ReadableStream` (`apiStream`) and updates the spinner
 status line per progress event.
 
-`ParseResult`:
+`ParseResult` (calorie/macro amounts are *computed by Go* for usda/off items,
+not emitted by the model):
 
 ```json
 {
-  "items": [{ "name": "...", "brand": null, "quantity": "1 cup", "grams": 140,
-              "fraction_pct": 100, "calories": 220, "protein_mg": 8000, "...": 0,
+  "items": [{ "name": "brown rice", "brand": null, "quantity": "1 cup", "grams": 195,
+              "fraction_pct": 100, "calories": 216, "protein_mg": 5000, "...": 0,
               "micros": {}, "tier": "hard_yes", "tier_reason": "whole grains",
-              "source": "usda", "source_ref": "173735", "confidence": "high" }],
-  "notes": "Assumed cooked brown rice; say 'dry' if it was measured dry.",
+              "tier_source": "table", "source": "usda", "source_ref": "168880",
+              "fdc_data_type": "SR Legacy", "resolution_tier": 2,
+              "portion_source": "estimated", "confidence": "high",
+              "match_description": "Rice, brown, long-grain, cooked",
+              "alternatives": [{ "fdc_id": 169703, "description": "Rice, white, cooked",
+                                 "fdc_data_type": "SR Legacy", "per_100g": { ... } }] }],
+  "notes": "Assumed cooked; say 'dry' if it was measured dry.",
   "ai_model": "claude-sonnet-5",
   "ai_raw": { ... }
 }
 ```
 
-The client edits the draft (fraction chips, delete an item, fix grams) and
-POSTs it to `/api/meals` unchanged in shape.
+`match_description` and `alternatives` are draft-only (confirm-the-match, not
+persisted). The client edits the draft (per-food fraction chips, fix grams,
+swap the match, mark weighed, delete a food) and
+POSTs the foods to `/api/foods`.
+
+## Resolution layer (`internal/ai` + `internal/nutrition`)
+
+The core rule: **the LLM parses and picks; FoodData Central supplies the
+numbers; Go does the arithmetic.** The model never emits a macro value for a
+grounded food.
+
+**Cascade (record which tier answered, `resolution_tier` 1–4):**
+
+1. **Barcode → Branded** (`off_barcode`, Open Food Facts) — packaged foods.
+2. **FDC Foundation, then SR Legacy** — whole/generic foods.
+3. **FDC Survey (FNDDS)** — composite/prepared/restaurant dishes ("salad bar",
+   "fish tacos"). `usda_search` queries all of `Foundation`, `SR Legacy`,
+   `Survey (FNDDS)`, `Branded`.
+4. **LLM estimate** — last resort; the one tier where the model gives numbers.
+
+**Division of labor.** The model calls `usda_search`, picks the best entry, and
+in `record_meal` returns that food's `source_ref` (fdc_id), `fdc_data_type`,
+and a portion in `grams` (resolved from the search result's `foodPortions`
+household-measure weights). `finish()` (in `parser.go`) then computes every
+amount as `per_100g × grams / 100` from the cached search result, so the stored
+numbers are lab-grounded and pass the Atwater check by construction. `micros`
+is still attached server-side from the cached full nutrient payload.
+
+**Canonical accretion.** A `canonical_lookup(name)` tool lets the model check
+the `canonical_foods` cache *first*; on a hit it records the food directly from
+the stored per-100g and skips `usda_search`. Every saved grounded food is
+upserted into the cache by normalized name (`service.accreteCanonical`), so
+repeat foods never re-resolve and a corrected match propagates forward.
+
+**Confirm-the-match (item 4).** For each usda food the model also lists the
+other plausible `alternative_fdc_ids` it saw; the server enriches them into
+`alternatives` (name + data_type + per-100g) on the draft. The PWA shows the
+matched entry inline with a data-type badge (tiers 1–2 quiet, 3–4 loud), a
+one-tap swap that recomputes nutrition from the chosen alternative, and a
+weighed-portion toggle. A low-confidence match never blocks the save.
 
 ## AI meal parsing (`internal/ai`)
 
@@ -267,14 +365,19 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
   estimate portions from visual cues; a "half of this" style hint sets
   `fraction_pct`, not scaled-down nutrition values.
 - **Tools exposed to Claude:**
+  - `canonical_lookup(name)` → checks the `canonical_foods` accretion cache;
+    on a hit the food records directly from the cached per-100g, no search.
   - `usda_search(query, page_size)` → top matches from FDC `/v1/foods/search`
-    with per-100g core nutrients (implemented in `internal/nutrition/fdc.go`;
-    prefer Foundation and SR Legacy data types, fall back to Branded).
+    across Foundation, SR Legacy, Survey (FNDDS), and Branded, with per-100g
+    core nutrients and `foodPortions` household-measure gram weights
+    (`internal/nutrition/fdc.go`).
   - `off_barcode(code)` → Open Food Facts `/api/v2/product/{code}.json` product
     name, brand, serving size, per-100g and per-serving nutriments
     (`internal/nutrition/off.go`).
   - `record_meal(items, notes)` → terminal tool; ends the loop and yields the
-    draft.
+    draft. For usda/off foods the model supplies `source_ref` + `fdc_data_type`
+    + `grams` + `alternative_fdc_ids` and **omits the macro fields** (Go
+    computes them); it gives numbers only for ai/label/web foods.
   - `web_search` (Anthropic's server tool, executed API-side; `AI_WEB_SEARCH=off`
     disables) → chains/restaurants skip USDA and use the published nutrition
     directly; any other brand name (packaged goods, store brands, local
@@ -316,11 +419,14 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
 
 ### Validation (server-side, deterministic)
 
-Before returning a draft, Go validates every item: tier is a known enum;
-`fraction_pct` in 1..300; all amounts non-negative; **Atwater check** —
-`protein_g*4 + carbs_g*4 + fat_g*9` must be within ±30% of `calories` (else
-clamp confidence to `low` and append a warning to `notes`). Never trust AI
-arithmetic for totals — totals are always recomputed in Go/SQL.
+Before returning a draft, Go validates every food: tier / portion_source /
+tier_source / resolution_tier are known enums/ranges; `fraction_pct` in 1..300;
+all amounts non-negative; **Atwater check** — `protein_g*4 + carbs_g*4 +
+fat_g*9` within ±30% of `calories` (else clamp confidence to `low` and warn in
+`notes`). Under the resolution layer, usda/off foods pass Atwater by
+construction because Go computed them from FDC; a failure post-resolution
+signals a bad composite decomposition or an unreviewed estimate. Totals are
+always recomputed in Go/SQL, never trusted from the model.
 
 ## PWA (`pwa/index.html`, single file — follow journal/finance conventions)
 
@@ -329,28 +435,30 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
 `prefers-color-scheme`.
 
 - **Today (home).** Top: big calories-remaining ring (over budget adds an
-  inner red overage ring), protein-to-go bar (progress toward target),
-  quality score badge, and a macro row — small pie of calorie share
-  (protein 4 / carbs 4 / fat 9 kcal per gram) with a legend carrying gram
-  totals plus the fiber total. Below: the day's meals
-  grouped by slot, each row tappable to edit. Bottom: an always-visible
-  log bar — text input, 🎤 mic button (Web Speech API, copy journal's
-  `webkitSpeechRecognition` usage), 📷 camera button (file input without a
-  `capture` attribute so iOS offers Photo Library / Take Photo), ⭐ favorites,
-  ⚖️ weight quick-entry. Day switcher (‹ today ›) to log to yesterday.
-- **Log flow.** Input → spinner → **draft preview card** in the dialog: item
-  list with name, grams, calories, macros; per-item fraction chips
-  (¼ ½ ¾ All) and a whole-meal fraction row; delete-item ✕; editable grams
-  (recompute proportionally client-side: nutrition scales linearly with
-  grams). Save → POST /api/meals → Today refreshes. Photos: picking a shot
-  opens a hint step (photo preview + optional free-text hint, pre-filled from
-  the log input) before Analyze; then client-side canvas downscale to ≤1600px
-  JPEG, upload, and the vision parse with the hint.
-- **Duplicate & favorites.** The edit dialog offers ⧉ Duplicate (opens a new
-  draft with the same items for the currently viewed day) and ☆ Favorite
-  (names the meal and saves it as a template). The log bar's ⭐ opens the
-  favorites list — tap one to open it as a pre-filled draft (adjust fraction
-  chips, Save), ✕ deletes a favorite.
+  inner red overage ring), protein-to-go bar, quality score badge, and a macro
+  row — calorie-share pie with a legend carrying gram totals, the fiber total,
+  and a **saturated-fat** actual/ceiling line (reddened when over). An
+  **outlier line** (from `day.anomaly`) appears only on an off day — one
+  expandable line naming the 2–3 foods that drove a low score or over-ceiling
+  sat fat. Below: each slot shows its **foods flat**, every food tappable to
+  edit; the slot header carries ☆ (favorite the meal) and 🗑 (clear the slot).
+  Bottom: an always-visible log bar — text, 🎤 mic, 📷 camera, ⭐ favorites,
+  ⚖️ weight. Day switcher (‹ today ›) to log to yesterday.
+- **Log flow.** Input → spinner → **draft card**: one row per food with name,
+  editable grams, calories, macros, per-food fraction chips (¼ ½ ¾ …), and a
+  **confirm-the-match line** — data-type badge (tier-colored), matched FDC
+  entry name, ⇄ one-tap swap to an alternative (recomputes nutrition from its
+  per-100g), ⚖ weighed-portion toggle. No whole-meal fraction — portion is
+  per-food. Save → **POST /api/foods** (appends the foods to the slot) → Today
+  refreshes. Photos: pick a shot → hint step → client-side canvas downscale to
+  ≤1600px JPEG, upload, vision parse; each resulting food keeps the photo.
+- **Editing.** Tapping a food opens a single-food sheet (fix grams/fraction/
+  tier, swap match, mark weighed, move slot via the slot picker, Delete). A
+  wrong match corrected here rewrites the food and accretes to canonical.
+- **Favorites.** ☆ a single food from its edit sheet (a **Food** favorite), or
+  ☆ a whole slot from the day view (a **Meal** favorite). The ⭐ log-bar button
+  opens the favorites sheet split into **Meals** and **Foods** sections; tapping
+  one opens it as an editable draft to adjust before adding to a day.
 - **Trends.** Week and Month toggles: per-day calorie bars (colored against
   target, score dot inside the bar top, value label above); a macro stack
   chart (grams, protein on the bottom, carbs, fat; protein target as the
@@ -359,13 +467,16 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   the finance convention of being honest about the in-progress day/month —
   averages count only completed days.
 - **Settings.** Calorie target, protein target (entered in grams, stored mg),
-  goal weight (entered lb, stored grams), weekly training targets, a Data card
-  (analysis export + full backup), build/version. The **analysis export** opens
-  a date-range dialog (pickers defaulted to `/api/export/range`) and downloads
-  two files: the `/api/export/analysis` JSON plus a daily-summary CSV the PWA
-  generates client-side from the JSON's `days` rollup. Both are in display
-  units (grams, lb, kcal) and as-eaten values — purpose-built for pasting into
-  a Claude chat, distinct from the raw full-DB backup at `/api/export`.
+  saturated-fat ceiling (grams), goal weight (entered lb, stored grams), weekly
+  training targets, a Data card
+  (analysis export + full backup), build/version. The **analysis export**
+  (`/api/export/analysis`) is the LLM-ready artifact: display units, as-eaten
+  values, a per-day rollup plus **`meal_groups`** (the analytical unit — one per
+  `(date, slot)`), per-food resolution provenance, and — so an analyst can't be
+  misled — **`meta.coverage`** (per-domain first-logged/day counts),
+  null-not-zero for unlogged domains, and a top-level **`analysis_warnings`**
+  array. The PWA also generates a daily-summary CSV client-side. Distinct from
+  the raw full-DB backup at `/api/export`.
 - PWA installability: `manifest.json`, minimal `sw.js` (network-first for the
   shell with cache fallback for offline — deploys show on the next reload with
   no version bump; network-only for API), apple-touch-icon. API key stored in
