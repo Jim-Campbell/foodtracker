@@ -37,7 +37,7 @@ header {
 }
 header svg { height: 26px; width: auto; display: block; }
 main { max-width: 480px; margin: 0 auto; padding: 14px 14px 190px; min-width: 0; }
-.card { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 16px; margin-bottom: 12px; }
+.card { background: var(--card); border-radius: 14px; box-shadow: var(--shadow); padding: 12px 14px; margin-bottom: 9px; }
 h2 { font-size: 1.05rem; margin-bottom: 10px; }
 h3 { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin: 4px 0 6px; }
 /* slot header: label left, slot totals right, a notch larger than row subtitles */
@@ -95,27 +95,29 @@ input[type=text], input[type=number], input[type=date] {
 .hint .hint-txt { flex: 1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hint.open .hint-txt { -webkit-line-clamp: unset; }
 /* day nav */
-.daynav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 12px; }
+.daynav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 8px; }
 .daynav h2 { margin: 0; min-width: 130px; text-align: center; }
-.arrow { border: 1px solid var(--line); background: var(--card); color: var(--text); width: 38px; height: 34px; border-radius: 9px; font-size: 1.15rem; cursor: pointer; }
+.arrow { border: 1px solid var(--line); background: var(--card); color: var(--text); width: 38px; height: 32px; border-radius: 9px; font-size: 1.15rem; cursor: pointer; }
 .arrow:disabled { opacity: .3; cursor: default; }
-/* hero */
-.hero { text-align: center; position: relative; padding-top: 22px; }
-.ringwrap { position: relative; width: 168px; height: 168px; margin: 0 auto; }
+/* hero — compact: small ring left, protein-to-go right, macros below */
+.hero { position: relative; }
+.herotop { display: flex; align-items: center; gap: 16px; }
+.herostat { flex: 1; min-width: 0; }
+.ringwrap { position: relative; width: 92px; height: 92px; flex-shrink: 0; }
 .ringwrap svg { width: 100%; height: 100%; }
 .ring-bg { fill: none; stroke: var(--chip); stroke-width: 10; }
 .ring-fg { fill: none; stroke-width: 10; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 60px 60px; transition: stroke-dashoffset .3s; }
 .ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.ring-center .big { font-size: 2rem; }
-.score-badge { position: absolute; top: 14px; right: 14px; color: #fff; font-weight: 700; font-size: .85rem; border-radius: 10px; padding: 3px 10px; border: none; cursor: pointer; font-family: inherit; }
+.ring-center .big { font-size: 1.3rem; }
+.score-badge { position: absolute; top: 0; right: 0; color: #fff; font-weight: 700; font-size: .85rem; border-radius: 10px; padding: 3px 10px; border: none; cursor: pointer; font-family: inherit; }
 .scorerow { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .scorerow:last-child { border-bottom: none; }
 .tierchip { color: #fff; font-weight: 700; font-size: .75rem; border-radius: 8px; padding: 3px 7px; flex-shrink: 0; min-width: 30px; text-align: center; }
-.pbar { background: var(--chip); border-radius: 5px; height: 10px; margin: 18px 0 4px; overflow: hidden; }
+.pbar { background: var(--chip); border-radius: 5px; height: 10px; margin: 4px 0 4px; overflow: hidden; }
 .pbar-fill { height: 100%; transition: width .3s; }
 .pbar-label { font-size: .8rem; color: var(--muted); }
 /* macro pie + legend row in the day hero */
-.macrorow { display: flex; align-items: center; gap: 16px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.macrorow { display: flex; align-items: center; gap: 16px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
 .macrorow svg { flex-shrink: 0; }
 .leg { font-size: .8rem; line-height: 1.5; display: flex; align-items: center; gap: 6px; }
 .legdot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
@@ -127,7 +129,7 @@ input[type=text], input[type=number], input[type=date] {
 /* training card — one row per activity: icon, 7 day-boxes (Mon–Sun), goal circles */
 /* icon is pinned to the left; a flexible spacer on each side of the day-box +
    circles cluster keeps that cluster centered in the leftover width. */
-.trainweek { display: grid; grid-template-columns: 32px minmax(14px, 1fr) repeat(7, 26px) auto minmax(0, 1fr); column-gap: 3px; row-gap: 13px; align-items: center; position: relative; margin-top: 4px; }
+.trainweek { display: grid; grid-template-columns: 30px minmax(10px, 1fr) repeat(7, 26px) auto minmax(0, 1fr); column-gap: 3px; row-gap: 8px; align-items: center; position: relative; margin-top: 2px; }
 .trainweek > :not(.ti-lane) { position: relative; z-index: 1; }
 .ti-sp { pointer-events: none; }
 /* pale vertical lane behind today's column (a touch wider than the boxes, no
@@ -146,7 +148,13 @@ input[type=text], input[type=number], input[type=date] {
 .ti-dot { width: 10px; height: 10px; border-radius: 50%; }
 .ti-circles { display: flex; gap: 2px; align-items: center; margin-left: 7px; }
 .ti-circle { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid currentColor; }
-.ti-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: .72rem; color: var(--muted); }
+/* weight row: same 7-box grid, Wednesday marked as the standard weigh-in day */
+.wt-box { width: 26px; height: 26px; border: 1.5px solid var(--line); border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); font-size: 13px; }
+.wt-box.taken { border-color: var(--primary); color: var(--primary); }
+.wt-wed { border-style: dashed; border-color: var(--primary); }
+.wt-val { margin-left: 7px; font-size: .82rem; font-weight: 600; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wt-val .u { font-weight: 400; color: var(--muted); font-size: .72rem; }
+.ti-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); font-size: .72rem; color: var(--muted); }
 .ti-legend .lgi { display: inline-flex; align-items: center; gap: 4px; }
 .qlSub { margin-bottom: 10px; }
 input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; }
@@ -180,12 +188,12 @@ textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid
 .dtbadge.t1, .dtbadge.t2 { background: var(--green); }
 .dtbadge.t3 { background: var(--amber); }
 .dtbadge.t4 { background: var(--red); }
-.chg { color: var(--accent); font-weight: 600; }
+.chg { color: var(--primary); font-weight: 600; }
 .wchip { border: 1px solid var(--line); border-radius: 20px; padding: 1px 7px; font-size: .78rem; background: var(--bg); color: var(--muted); cursor: pointer; }
 .wchip.on { background: var(--green); color: #fff; border-color: var(--green); }
 .altlist { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
 .altopt { display: flex; align-items: center; gap: 7px; text-align: left; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: .8rem; color: var(--text); cursor: pointer; }
-.altopt:hover { border-color: var(--accent); }
+.altopt:hover { border-color: var(--primary); }
 /* meal photo in the detail dialog: cropped banner, tap to see the full shot */
 .dphoto { width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; margin: 8px 0 10px; cursor: pointer; display: block; }
 .dphoto.full { max-height: none; object-fit: contain; }
@@ -620,8 +628,12 @@ function renderToday(m) {
     </div>
     <div class="card hero">
       ${scoreBadge(s.score)}
-      ${ring(s.calories, target)}
-      ${proteinBar(s.protein_mg, s.protein_target_mg)}
+      <div class="herotop">
+        ${ring(s.calories, target)}
+        <div class="herostat">
+          ${proteinBar(s.protein_mg, s.protein_target_mg)}
+        </div>
+      </div>
       ${macroRow(s)}
     </div>
     ${anomalyLine(s)}
@@ -680,8 +692,11 @@ const EX_FIELDS = {
 async function loadExercise() {
   const end = today();
   const start = weekStart(addDays(end, -7 * 8));
-  const sessions = await api(`/exercise?start=${start}&end=${end}`);
-  S.exercise = { sessions, start, end };
+  const [sessions, weights] = await Promise.all([
+    api(`/exercise?start=${start}&end=${end}`),
+    api(`/weights?start=${start}&end=${end}`),
+  ]);
+  S.exercise = { sessions, weights, start, end };
 }
 function invalidateExercise() { S.exercise = null; }
 function typeSessionsInWeek(sessions, type, weekStartStr) {
@@ -717,14 +732,41 @@ function trainRowHTML(t, days) {
       const noted = ds.some(s => s.note && s.note.trim()) ? `<span class="ti-note" style="background:var(${t.color})"></span>` : '';
       return `<div class="ti-box" onclick="event.stopPropagation();editExerciseSession(${ds[0].id})">${inner}${noted}</div>`;
     }
-    return `<div class="ti-box" onclick="event.stopPropagation();quickLogSheet('${t.key}')"></div>`;
+    // Empty box: today/future logs to today; a past day logs to that day.
+    const targetDay = d > today() ? today() : d;
+    return `<div class="ti-box" onclick="event.stopPropagation();quickLogSheet('${t.key}',null,'${targetDay}')"></div>`;
   }).join('');
   const left = Math.max(0, target - filledDays);
   const circles = left > 0
     ? `<div class="ti-circles" style="color:var(${t.color})">${'<span class="ti-circle"></span>'.repeat(left)}</div>`
     : `<div class="ti-circles"></div>`;
-  return `<div class="ti-icon${met ? ' met' : ''}" title="${t.label}" onclick="quickLogSheet('${t.key}')">${t.icon}</div>
+  return `<div class="ti-icon${met ? ' met' : ''}" title="${t.label}" onclick="quickLogSheet('${t.key}',null,'${today()}')">${t.icon}</div>
     <div class="ti-sp"></div>${boxes}${circles}<div class="ti-sp"></div>`;
+}
+// The weight row mirrors the activity rows: 7 Mon–Sun boxes, Wednesday marked
+// as the standard weigh-in day, a filled box on days weighed (tap to edit/
+// delete), and the week's latest value where the goal circles would sit. An
+// empty box logs a weigh-in for that day (future days clamp to today).
+function weightRowHTML(days) {
+  const byDay = {};
+  (S.exercise.weights || []).forEach(w => (byDay[w.day] = w));
+  const week = days.map(d => byDay[d]).filter(Boolean);
+  const latest = week.length ? week[week.length - 1] : null;
+  const boxes = days.map((d, i) => {
+    const wed = i === 2 ? ' wt-wed' : '';
+    const w = byDay[d];
+    if (w) {
+      const lb = (w.weight_g / 453.592).toFixed(1);
+      return `<div class="wt-box taken${wed}" title="${lb} lb — tap to edit" onclick="event.stopPropagation();weightDialog('${d}')"><span class="ti-dot" style="background:var(--primary);width:9px;height:9px"></span></div>`;
+    }
+    const targetDay = d > today() ? today() : d;
+    return `<div class="wt-box${wed}" title="Log weight" onclick="event.stopPropagation();weightDialog('${targetDay}')"></div>`;
+  }).join('');
+  const val = latest
+    ? `<div class="wt-val">${(latest.weight_g / 453.592).toFixed(1)} <span class="u">lb</span></div>`
+    : `<div class="wt-val" style="font-weight:400;color:var(--muted)">— <span class="u">lb</span></div>`;
+  return `<div class="ti-icon" title="Weight (weigh in Wednesdays)" onclick="weightDialog('${today()}')">⚖️</div>
+    <div class="ti-sp"></div>${boxes}${val}<div class="ti-sp"></div>`;
 }
 function trainingCardHTML() {
   if (!S.exercise) return `<div class="card"><h3>Training · this week</h3><div class="muted sm">Loading…</div></div>`;
@@ -735,7 +777,7 @@ function trainingCardHTML() {
   const header = `<div></div><div class="ti-sp"></div>` +
     letters.map((l, i) => `<div class="ti-hdr${i === todayIdx ? ' tdy' : ''}">${l}</div>`).join('') +
     `<div class="ti-hdr" style="text-align:left;margin-left:8px">left</div><div class="ti-sp"></div>`;
-  const rows = TRAIN_ROWS.map(t => trainRowHTML(t, days)).join('');
+  const rows = TRAIN_ROWS.map(t => trainRowHTML(t, days)).join('') + weightRowHTML(days);
   const legend = `<div class="ti-legend"><span style="font-weight:500">Cardio</span>` +
     `<span class="lgi">🏃 Run</span><span class="lgi">🚴 Ride</span>` +
     `<span class="lgi">${spinBikeSVG(15)} Spin</span>` +
@@ -750,7 +792,7 @@ function editExerciseSession(id) {
   quickLogSheet(s.type, s);
 }
 let QUICKLOG = null;
-function quickLogSheet(type, editSession) {
+function quickLogSheet(type, editSession, day) {
   const cfg = EX_FIELDS[type];
   const vals = {};
   cfg.chips.forEach(f => {
@@ -760,7 +802,12 @@ function quickLogSheet(type, editSession) {
   });
   vals.note = editSession ? (editSession.note || '') : '';
   vals.hr_zones = editSession && editSession.hr_zones ? { ...editSession.hr_zones } : {};
-  QUICKLOG = { type, vals, editId: editSession ? editSession.id : null, zonesOpen: !!(editSession && editSession.hr_zones) };
+  QUICKLOG = {
+    type, vals,
+    editId: editSession ? editSession.id : null,
+    day: editSession ? editSession.day : (day || S.day),
+    zonesOpen: !!(editSession && editSession.hr_zones),
+  };
   renderQuickLog();
 }
 function setQuickLogVal(key, val) { QUICKLOG.vals[key] = val; renderQuickLog(); }
@@ -803,9 +850,9 @@ function cleanZones(zones) {
   return Object.keys(out).length ? out : null;
 }
 function renderQuickLog() {
-  const { type, vals, editId } = QUICKLOG;
+  const { type, vals, editId, day } = QUICKLOG;
   const cfg = EX_FIELDS[type];
-  const existingToday = (S.exercise?.sessions || []).filter(s => s.type === type && s.day === S.day && s.id !== editId);
+  const existingToday = (S.exercise?.sessions || []).filter(s => s.type === type && s.day === day && s.id !== editId);
   const fieldsHTML = cfg.chips.map(f => {
     if (f.kind === 'stepper') {
       const v = vals[f.key] ?? f.default;
@@ -822,8 +869,8 @@ function renderQuickLog() {
   }).join('');
   const zonesHTML = type === 'cardio'
     ? zonesSectionHTML(vals.hr_zones, QUICKLOG.zonesOpen, 'toggleZones()', n => `setZoneMin(${n},this.value)`) : '';
-  openDialog(`<h2>Log ${cfg.label}</h2>
-    ${existingToday.length ? `<div class="muted sm qlSub">Adds another session — ${existingToday.length} already logged today</div>` : ''}
+  openDialog(`<h2>Log ${cfg.label}${editId ? '' : ` · ${fmtDayHeader(day)}`}</h2>
+    ${existingToday.length ? `<div class="muted sm qlSub">Adds another session — ${existingToday.length} already logged that day</div>` : ''}
     ${fieldsHTML}
     ${zonesHTML}
     <label class="f">Notes</label>
@@ -840,7 +887,7 @@ function setQuickLogValQuiet(key, val) { QUICKLOG.vals[key] = val; }
 async function saveQuickLog() {
   const { type, vals, editId } = QUICKLOG;
   const cfg = EX_FIELDS[type];
-  const body = { day: S.day, type, note: (vals.note || '').trim(), input_kind: 'tap' };
+  const body = { day: QUICKLOG.day, type, note: (vals.note || '').trim(), input_kind: 'tap' };
   cfg.chips.forEach(f => {
     let v = vals[f.key];
     if (!f.numeric && v === 'Other' && vals[f.key + '_text']) v = vals[f.key + '_text'].trim();
@@ -1111,29 +1158,47 @@ async function saveExerciseConfirm() {
 }
 
 // ---------- weight quick-entry ----------
-async function weightDialog() {
-  let last = null;
-  try {
-    const rows = await api(`/weights?start=${addDays(today(), -90)}&end=${today()}`);
-    last = rows.length ? rows[rows.length - 1] : null;
-  } catch {}
-  openDialog(`<h2>Log weight</h2>
-    ${last ? `<div class="muted sm" style="margin-bottom:10px">Last: ${(last.weight_g / 453.592).toFixed(1)} lb on ${fmtDayHeader(last.day)}</div>` : ''}
+// weightDialog logs or edits a weigh-in for a specific day (defaults to the
+// viewed day). It prefills from the loaded week's weights, so tapping a filled
+// box edits/deletes that day's entry.
+function weightDialog(day) {
+  day = day || S.day;
+  const existing = ((S.exercise && S.exercise.weights) || []).find(w => w.day === day);
+  const lb = existing ? (existing.weight_g / 453.592).toFixed(1) : '';
+  openDialog(`<h2>${existing ? 'Edit' : 'Log'} weight · ${fmtDayHeader(day)}</h2>
     <label class="f">Weight (lb)</label>
-    <input type="number" id="wLb" step="0.1" inputmode="decimal" autofocus>
+    <input type="number" id="wLb" step="0.1" inputmode="decimal" value="${lb}" autofocus>
     <label class="f">Note (optional)</label>
-    <input type="text" id="wNote">
-    <div class="dlg-actions"><button class="btn ghost" onclick="closeDialog()">Cancel</button><button class="btn primary" onclick="saveWeight()">Save</button></div>`);
+    <input type="text" id="wNote" value="${existing ? esc(existing.note || '') : ''}">
+    <div class="dlg-actions">
+      ${existing ? `<button class="btn danger" onclick="deleteWeight('${day}')">Delete</button>` : ''}
+      <button class="btn ghost" onclick="closeDialog()">Cancel</button>
+      <button class="btn primary" onclick="saveWeight('${day}')">Save</button>
+    </div>`);
 }
-async function saveWeight() {
+async function refreshAfterWeight() {
+  S.trendRows = null; S.trendWeights = null;
+  invalidateExercise();
+  await loadExercise();
+  render();
+}
+async function saveWeight(day) {
   const lb = parseFloat($('#wLb').value);
   if (!lb) { toast('Enter a weight'); return; }
   const weight_g = Math.round(lb * 453.592);
   const note = $('#wNote').value.trim();
   try {
-    await api('/weights', { method: 'POST', body: { day: S.day, weight_g, note } });
+    await api('/weights', { method: 'POST', body: { day: day || S.day, weight_g, note } });
     closeDialog(); toast('Weight saved');
-    S.trendRows = null; S.trendWeights = null;
+    await refreshAfterWeight();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+async function deleteWeight(day) {
+  if (!confirm('Delete this weigh-in?')) return;
+  try {
+    await api('/weights/' + day, { method: 'DELETE' });
+    closeDialog(); toast('Deleted');
+    await refreshAfterWeight();
   } catch (e) { toast('Error: ' + e.message); }
 }
 
