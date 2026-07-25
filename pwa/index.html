@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#c2542a">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23c2542a'/%3E%3Ctext x='50' y='70' font-size='56' text-anchor='middle' fill='white' font-family='-apple-system,sans-serif' font-weight='bold'%3EF%3C/text%3E%3C/svg%3E">
@@ -157,11 +157,11 @@ input[type=text], input[type=number], input[type=date] {
 .ti-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); font-size: .72rem; color: var(--muted); }
 .ti-legend .lgi { display: inline-flex; align-items: center; gap: 4px; }
 .qlSub { margin-bottom: 10px; }
-input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; }
-textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: .85rem; font-family: inherit; resize: vertical; line-height: 1.35; }
+input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: 16px; }
+textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: 16px; font-family: inherit; resize: vertical; line-height: 1.35; }
 /* minutes stepper: −/editable field/+ pill, reuses .qty from the portion control */
 .qty.mins { margin: 4px 0 2px; }
-.qty input.qtyIn { width: 46px; text-align: center; border: none; background: transparent; color: var(--text); font-size: .9rem; font-weight: 600; -moz-appearance: textfield; }
+.qty input.qtyIn { width: 46px; text-align: center; border: none; background: transparent; color: var(--text); font-size: 16px; font-weight: 600; -moz-appearance: textfield; }
 .qty input.qtyIn::-webkit-outer-spin-button, .qty input.qtyIn::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .qty .unit { font-size: .72rem; color: var(--muted); padding-right: 8px; }
 /* HR-zone panel (cardio) */
@@ -169,14 +169,14 @@ textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid
 .zones { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .zrow { display: flex; align-items: center; gap: 8px; }
 .zrow .zlab { width: 26px; font-weight: 600; font-size: .82rem; color: var(--s-cardio); }
-.zrow input.zin { flex: 1; max-width: 90px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: .85rem; }
+.zrow input.zin { flex: 1; max-width: 90px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 16px; }
 /* item editor */
 .itemlist { margin-bottom: 6px; }
 .itemrow { border-bottom: 1px solid var(--line); padding: 10px 0; }
 .itemrow:last-child { border-bottom: none; }
 .irow-top { display: flex; align-items: flex-start; gap: 8px; }
 .irow-mid { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; }
-.gramsIn { width: 52px; padding: 6px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font-size: .85rem; }
+.gramsIn { width: 52px; padding: 6px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font-size: 16px; }
 .irow-mid .s { white-space: nowrap; }
 /* confirm-the-match row (item 4): which DB entry backed the numbers */
 .matchrow { margin: 4px 0 2px; font-size: .8rem; }
@@ -585,8 +585,11 @@ function mealCarbs(m) {
 function mealFat(m) {
   return (m.items || []).reduce((s, i) => s + Math.round(i.fat_mg * i.fraction_pct / 100 / 1000), 0);
 }
-function macroSummary(cal, p, c, f) {
-  return `${cal} cal · ${p}g protein · ${c}g carbs · ${f}g fat`;
+function mealSatFat(m) {
+  return (m.items || []).reduce((s, i) => s + Math.round((i.sat_fat_mg || 0) * i.fraction_pct / 100 / 1000), 0);
+}
+function macroSummary(cal, p, c, f, sf) {
+  return `${cal} cal · ${p}g protein · ${c}g carbs · ${f}g fat · ${sf}g sat fat`;
 }
 // foodRow: one first-class food inside a slot, tappable to edit. A food is
 // starred when it matches a saved Food favorite.
@@ -599,7 +602,8 @@ function foodRow(it) {
   const p = Math.round(it.protein_mg * it.fraction_pct / 100 / 1000);
   const c = Math.round(it.carbs_mg * it.fraction_pct / 100 / 1000);
   const f = Math.round(it.fat_mg * it.fraction_pct / 100 / 1000);
-  return `<div class="row" onclick="editFood(${it.id})">${thumb}<div class="grow"><div class="m">${esc(it.name)}${star}</div><div class="s">${macroSummary(cal, p, c, f)}</div></div></div>`;
+  const sf = Math.round((it.sat_fat_mg || 0) * it.fraction_pct / 100 / 1000);
+  return `<div class="row" onclick="editFood(${it.id})">${thumb}<div class="grow"><div class="m">${esc(it.name)}${star}</div><div class="s">${macroSummary(cal, p, c, f, sf)}</div></div></div>`;
 }
 // anomalyLine: the outlier attribution (item 6) as one expandable line under
 // the hero — a quiet flag on an off day, nothing at all on a normal one. Tap to
@@ -642,7 +646,7 @@ function renderToday(m) {
       ? order.map(([key, label]) => {
         const meal = (groups[key] || [])[0];
         if (!meal || !(meal.items || []).length) return '';
-        const cal = mealCalories(meal), p = mealProtein(meal), c = mealCarbs(meal), f = mealFat(meal);
+        const cal = mealCalories(meal), p = mealProtein(meal), c = mealCarbs(meal), f = mealFat(meal), sf = mealSatFat(meal);
         // Favorite the meal only when it's an actual collection; single foods
         // are favorited from their own edit sheet.
         const favMeal = meal.items.length > 1 && matchingFavorite(meal.items);
@@ -652,7 +656,7 @@ function renderToday(m) {
           : '';
         return `<div class="card">
           <div class="slothead"><h3>${label}</h3>
-            <span class="slotsum">${macroSummary(cal, p, c, f)}</span>
+            <span class="slotsum">${macroSummary(cal, p, c, f, sf)}</span>
             ${favBtn}<button class="slotact lk" onclick="clearMealConfirm(${meal.id})" title="Clear ${label}">🗑</button>
           </div>
           ${meal.items.map(foodRow).join('')}
@@ -1221,13 +1225,14 @@ function favTotals(items) {
     t.p += Math.round(it.protein_mg * f / 1000);
     t.c += Math.round(it.carbs_mg * f / 1000);
     t.f += Math.round(it.fat_mg * f / 1000);
+    t.sf += Math.round((it.sat_fat_mg || 0) * f / 1000);
     return t;
-  }, { cal: 0, p: 0, c: 0, f: 0 });
+  }, { cal: 0, p: 0, c: 0, f: 0, sf: 0 });
 }
 function favRow(f) {
   const t = favTotals(f.items);
   return `<div class="row" onclick="logFavorite(${f.id})">
-    <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${macroSummary(t.cal, t.p, t.c, t.f)}</div></div>
+    <div class="grow"><div class="m">${esc(f.name)}</div><div class="s">${macroSummary(t.cal, t.p, t.c, t.f, t.sf)}</div></div>
     <button class="lk" style="color:var(--muted)" onclick="event.stopPropagation();renameFavorite(${f.id})" title="Rename favorite">✏️</button>
     <button class="lk" onclick="event.stopPropagation();removeFavorite(${f.id})" title="Delete favorite">✕</button>
   </div>`;
@@ -1337,8 +1342,9 @@ function itemTotals(items) {
     t.protein += Math.round(it.protein_mg * f / 1000);
     t.carbs += Math.round(it.carbs_mg * f / 1000);
     t.fat += Math.round(it.fat_mg * f / 1000);
+    t.satFat += Math.round((it.sat_fat_mg || 0) * f / 1000);
     return t;
-  }, { cal: 0, protein: 0, carbs: 0, fat: 0 });
+  }, { cal: 0, protein: 0, carbs: 0, fat: 0, satFat: 0 });
 }
 // Discrete portion stops (percent of full portion): ¼ ½ ¾ 1 1½ 2 3.
 const QTY_STOPS = [25, 50, 75, 100, 150, 200, 300];
@@ -1376,7 +1382,7 @@ function draftItemRow(it, idx) {
     </div>
     <div class="irow-mid">
       <input type="number" class="gramsIn" value="${it.grams || ''}" placeholder="g" onchange="setDraftGrams(${idx},this.value)">
-      <span class="s">${eatenCal} cal · ${macro(eaten('protein_mg'), 'protein', 'P')} · ${macro(eaten('carbs_mg'), 'carbs', 'C')} · ${macro(eaten('fat_mg'), 'fat', 'F')}</span>
+      <span class="s">${eatenCal} cal · ${macro(eaten('protein_mg'), 'protein', 'P')} · ${macro(eaten('carbs_mg'), 'carbs', 'C')} · ${macro(eaten('fat_mg'), 'fat', 'F')} · ${eaten('sat_fat_mg')}g sat fat</span>
     </div>
     ${matchRow(it, idx)}
     ${qtyStepper(it, idx)}
@@ -1482,7 +1488,7 @@ function draftDialogHTML() {
     </div>`;
     })() : ''}
     <div class="dfoot">
-      <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein}g protein · ${totals.carbs}g carbs · ${totals.fat}g fat</div>
+      <div class="dtot"><b>${totals.cal}</b> cal · ${totals.protein}g protein · ${totals.carbs}g carbs · ${totals.fat}g fat · ${totals.satFat}g sat fat</div>
       <div class="dlg-actions">
         ${editing ? `<button class="btn danger" onclick="deleteFoodConfirm(${DRAFT.id})">Delete</button>` : ''}
         <button class="btn ghost" onclick="closeDialog()">Cancel</button>
