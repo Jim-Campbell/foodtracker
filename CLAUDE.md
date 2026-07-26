@@ -66,6 +66,13 @@ layout. Build-phase prompts live in `build-prompts/`.
   `createdb food_smoke && DATABASE_URL=postgres://localhost:5432/food_smoke?sslmode=disable FOOD_API_KEY=x go run ./cmd/server`
   — `dropdb food_smoke` when done.
 
+## Build stamp
+
+`pwa/index.html`'s header has a tiny `.buildstamp` span (`YYYYMMDD.N`, N
+resets to 1 on a new date) so Jim can glance at the running app and confirm
+which deploy he's on. **Every commit that changes `pwa/index.html` must bump
+it** — same date, increment N; new date, reset to `.1`.
+
 ## Deployment
 
 Render, from the `Dockerfile` (multi-stage `golang:1.25-alpine` → `alpine`,
