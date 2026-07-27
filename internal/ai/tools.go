@@ -25,10 +25,25 @@ var canonicalLookupSchema = json.RawMessage(`{
 func canonicalLookupTool() Tool {
 	return Tool{
 		Name:        toolCanonicalLookup,
-		Description: "Check whether a food was already resolved and cached from a previous log. Call this FIRST for each item. On a hit you get its FDC id, data_type, per-100g nutrition, a typical portion in grams, and quality tier — record it directly (source_ref + fdc_data_type + grams) without usda_search. On a miss, resolve normally.",
+		Description: "Check whether a food was already resolved and cached from a previous log. Call this FIRST for each item. On a hit you get its FDC id, data_type, per-100g nutrition, quality tier, and any existing inclusion-component tags — record the food directly (source_ref + fdc_data_type + grams) without usda_search, and copy component_tags into your components field VERBATIM (same component_id + grams_per_serving) rather than re-deciding. On a miss, resolve normally.",
 		InputSchema: canonicalLookupSchema,
 	}
 }
+
+// componentRulesPrompt is the encoded inclusion-component tagging guidance
+// (inclusion-spec-20260726.md §5, phase-2 build prompt §1), shared verbatim
+// between the meal parser's system prompt and the batch tag-suggestion call
+// so the two never drift into different rules for the same five components.
+const componentRulesPrompt = `INCLUSION COMPONENTS — tag foods that contribute to Jim's five tracked dietary-inclusion components, on top of (never instead of) the tier you already assign. A wrong tag silently inflates a score Jim can't see the inputs of; a missing one is visible and harmless. When in doubt, omit.
+
+- leafy_greens and cruciferous are separate components with separate rationale. Kale (and other foods that are genuinely both, e.g. collard greens) gets BOTH tags — double-counting here is deliberate, not a bug.
+- Whole fruit (peach, apple, banana, melon, etc.) gets NO component. berries is only actual berries (strawberries, blueberries, raspberries, blackberries) — never generalize it to "fruit."
+- Starchy vegetables (potato, sweet potato, winter squash, corn) get NO component — the framework treats them separately from leafy/cruciferous vegetables.
+- Nuts, seeds, nut butters, olive oil, and avocado get NO component. There is no such component and there will not be one — never invent one.
+- fatty_fish is ONLY salmon, sardines, mackerel, herring, and anchovies. Lean fish (cod, halibut, tilapia, sole, tuna) is NOT fatty_fish and gets no component from this list.
+- For a composite/prepared dish, tag only the component-bearing ingredient's share, expressed as grams_per_serving on the WHOLE dish (e.g. a lentil soup where ~400g of the dish carries one legume serving is legumes @ grams_per_serving 400 -- not the raw lentil weight).
+- Default grams_per_serving when nothing better is known: leafy_greens 30 (raw) or 85 (cooked), berries 75, legumes 90 (cooked), fatty_fish 100, cruciferous 85. Prefer a household-measure portion from search/lookup results when one is available.
+- Omit components entirely for a food that plausibly contributes to none — most foods do. Never tag speculatively.`
 
 var usdaSearchSchema = json.RawMessage(`{
   "type": "object",
@@ -100,7 +115,19 @@ var recordMealSchema = json.RawMessage(`{
           "source_ref": { "type": ["string", "null"], "description": "For usda: the FDC id (digits only). For off: the barcode. For web: the source URL. The app parses the FDC id from here to compute nutrition, so it must be exactly the chosen result's fdc_id." },
           "fdc_data_type": { "type": ["string", "null"], "description": "For usda items, the chosen search result's data_type, verbatim: 'Foundation', 'SR Legacy', 'Survey (FNDDS)', or 'Branded'. Null for non-usda." },
           "alternative_fdc_ids": { "type": "array", "items": { "type": "string" }, "description": "For usda items: the fdc_ids (digits only) of the OTHER plausible search results you considered but didn't pick, best first, up to 3. The app shows these as one-tap alternatives so Jim can fix a wrong match. Omit for non-usda items." },
-          "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "components": {
+            "type": "array",
+            "description": "Diet-framework inclusion components this food contributes to, or omitted/empty when it contributes to none. Most foods contribute to none.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "component_id": { "type": "string", "enum": ["leafy_greens", "berries", "legumes", "fatty_fish", "cruciferous"] },
+                "grams_per_serving": { "type": "integer", "description": "Grams of THIS food that make one serving of that component. For a whole food use the standard serving weight; for a composite dish use the grams of the dish that carry one serving (e.g. 400 g of lentil soup = 1 legume serving)." }
+              },
+              "required": ["component_id", "grams_per_serving"]
+            }
+          }
         },
         "required": [
           "name", "quantity", "fraction_pct", "tier", "tier_reason", "tier_source", "source", "confidence"

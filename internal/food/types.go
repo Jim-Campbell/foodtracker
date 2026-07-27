@@ -194,6 +194,24 @@ type MealItem struct {
 	MatchDescription  string             `json:"match_description,omitempty"`
 	Alternatives      []MatchAlternative `json:"alternatives,omitempty"`
 	AlternativeFDCIDs []string           `json:"alternative_fdc_ids,omitempty"`
+	// Components (inclusion phase 2): the diet-framework components this food
+	// contributes to, proposed by the parser or set by hand in the draft/edit
+	// chip picker. Carried on the item through save, then fanned out into
+	// food_component_tags (service.accreteComponentTags) — never stored on
+	// meal_items itself.
+	Components []ItemComponent `json:"components,omitempty"`
+}
+
+// ItemComponent is one component tag riding along on a draft or saved food:
+// which of the five inclusion components it contributes to, and the grams
+// that make up one serving. Source distinguishes a parser proposal Jim left
+// untouched ("ai", the zero value) from a chip he touched in the picker
+// ("user") — accreteComponentTags uses this to decide the persisted
+// tag_source, and a "user" row is never overwritten by a later AI proposal.
+type ItemComponent struct {
+	ComponentID     string `json:"component_id"`
+	GramsPerServing int    `json:"grams_per_serving"`
+	Source          string `json:"source,omitempty"`
 }
 
 // MatchAlternative is an alternative FDC entry offered in the confirm step so a
@@ -215,16 +233,26 @@ type Weight struct {
 
 // Settings is the single-row (id=1) app configuration.
 type Settings struct {
-	CalorieTarget        int       `json:"calorie_target"`
-	ProteinTargetMg      int64     `json:"protein_target_mg"`
-	SatFatTargetMg       int64     `json:"sat_fat_target_mg"`
-	WeightTargetG        *int      `json:"weight_target_g,omitempty"`
-	CardioWeeklyTarget   int       `json:"cardio_weekly_target"`
-	StrengthWeeklyTarget int       `json:"strength_weekly_target"`
-	YogaWeeklyTarget     int       `json:"yoga_weekly_target"`
-	MeditationWeeklyDays int       `json:"meditation_weekly_days"`
-	PTWeeklyDays         int       `json:"pt_weekly_days"`
-	UpdatedAt            time.Time `json:"updated_at,omitempty"`
+	CalorieTarget        int   `json:"calorie_target"`
+	ProteinTargetMg      int64 `json:"protein_target_mg"`
+	SatFatTargetMg       int64 `json:"sat_fat_target_mg"`
+	WeightTargetG        *int  `json:"weight_target_g,omitempty"`
+	CardioWeeklyTarget   int   `json:"cardio_weekly_target"`
+	StrengthWeeklyTarget int   `json:"strength_weekly_target"`
+	YogaWeeklyTarget     int   `json:"yoga_weekly_target"`
+	MeditationWeeklyDays int   `json:"meditation_weekly_days"`
+	PTWeeklyDays         int   `json:"pt_weekly_days"`
+	// ComponentTargets overrides ComponentCatalog's default per-component
+	// weekly target (inclusion phase 5); {} / nil means "use the defaults".
+	// Sanitized by SanitizeComponentTargets before it ever reaches the store.
+	ComponentTargets map[string]int `json:"component_targets,omitempty"`
+	// Nudge configuration (inclusion phase 5, build-prompts/inclusion-5-nudges.md).
+	// Purely client-side gating -- there is no server-side scheduler or push.
+	SupplyNudgeDOW int       `json:"supply_nudge_dow"` // 0=Sun..6=Sat
+	NudgeStartHour int       `json:"nudge_start_hour"`
+	NudgeEndHour   int       `json:"nudge_end_hour"`
+	NudgesEnabled  bool      `json:"nudges_enabled"`
+	UpdatedAt      time.Time `json:"updated_at,omitempty"`
 }
 
 // ExerciseSession is one logged workout/practice. Day is a user-chosen date,
@@ -329,11 +357,12 @@ type Favorite struct {
 // ExportDoc is the full-database backup returned by GET /api/export — the
 // backup story for Render's ephemeral disk. Meals are ordered by day.
 type ExportDoc struct {
-	ExportedAt time.Time         `json:"exported_at"`
-	Settings   Settings          `json:"settings"`
-	Weights    []Weight          `json:"weights"`
-	Meals      []Meal            `json:"meals"`
-	Favorites  []Favorite        `json:"favorites"`
-	Exercise   []ExerciseSession `json:"exercise"`
-	Canonical  []CanonicalFood   `json:"canonical_foods"`
+	ExportedAt    time.Time         `json:"exported_at"`
+	Settings      Settings          `json:"settings"`
+	Weights       []Weight          `json:"weights"`
+	Meals         []Meal            `json:"meals"`
+	Favorites     []Favorite        `json:"favorites"`
+	Exercise      []ExerciseSession `json:"exercise"`
+	Canonical     []CanonicalFood   `json:"canonical_foods"`
+	ComponentTags []ComponentTag    `json:"component_tags"`
 }

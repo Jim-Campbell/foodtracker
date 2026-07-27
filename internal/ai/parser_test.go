@@ -758,3 +758,218 @@ func TestParserLogExercise(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestParserComponentsKaleMultiTag: a kale item's proposed components ride
+// through the parse unchanged -- both leafy_greens and cruciferous survive
+// (inclusion phase 2's deliberate double-count).
+func TestParserComponentsKaleMultiTag(t *testing.T) {
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "kale salad"
+					it.Source = food.SourceAI
+					it.Components = []food.ItemComponent{
+						{ComponentID: food.ComponentLeafyGreens, GramsPerServing: 30},
+						{ComponentID: food.ComponentCruciferous, GramsPerServing: 85},
+					}
+				})},
+			})},
+		},
+	}}
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", true, slog.Default())
+	result, err := p.ParseText(context.Background(), "kale salad", "2026-07-26", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	comps := result.Items[0].Components
+	if len(comps) != 2 {
+		t.Fatalf("Components = %+v, want 2 (leafy_greens and cruciferous)", comps)
+	}
+	var hasGreens, hasCruciferous bool
+	for _, c := range comps {
+		if c.ComponentID == food.ComponentLeafyGreens {
+			hasGreens = true
+		}
+		if c.ComponentID == food.ComponentCruciferous {
+			hasCruciferous = true
+		}
+	}
+	if !hasGreens || !hasCruciferous {
+		t.Errorf("Components = %+v, want both leafy_greens and cruciferous", comps)
+	}
+}
+
+// TestParserComponentsPeachNone: a whole-fruit item with no components
+// proposed stays componentless -- the real miss the spec calls out (a peach
+// must never resolve to berries).
+func TestParserComponentsPeachNone(t *testing.T) {
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "raw peach"
+					it.Source = food.SourceAI
+				})},
+			})},
+		},
+	}}
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", true, slog.Default())
+	result, err := p.ParseText(context.Background(), "a peach", "2026-07-26", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	if len(result.Items[0].Components) != 0 {
+		t.Errorf("Components = %+v, want none for a whole peach", result.Items[0].Components)
+	}
+}
+
+// TestParserComponentsUnknownIDDropped: a malformed/unknown component_id
+// (e.g. the model inventing a "nuts" component that doesn't exist) must
+// degrade to omission, never a 500.
+func TestParserComponentsUnknownIDDropped(t *testing.T) {
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "mixed nuts"
+					it.Source = food.SourceAI
+					it.Components = []food.ItemComponent{
+						{ComponentID: "nuts", GramsPerServing: 30},
+						{ComponentID: food.ComponentLegumes, GramsPerServing: 90},
+					}
+				})},
+			})},
+		},
+	}}
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", true, slog.Default())
+	result, err := p.ParseText(context.Background(), "mixed nuts", "2026-07-26", nil)
+	if err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+	comps := result.Items[0].Components
+	if len(comps) != 1 || comps[0].ComponentID != food.ComponentLegumes {
+		t.Errorf("Components = %+v, want only the valid legumes tag (unknown id dropped, not a 500)", comps)
+	}
+}
+
+// TestSuggestComponentTags: the batch backfill call (Settings → "Tag foods")
+// sends one message forcing the suggest_tags tool and decodes its proposals,
+// sanitizing them the same way finish() does for record_meal.
+func TestSuggestComponentTags(t *testing.T) {
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolSuggestTags, map[string]any{
+				"foods": []map[string]any{
+					{"name": "kale salad", "components": []map[string]any{
+						{"component_id": food.ComponentLeafyGreens, "grams_per_serving": 30},
+						{"component_id": "not_a_real_component", "grams_per_serving": 40},
+					}},
+					{"name": "raw peach", "components": []map[string]any{}},
+				},
+			})},
+		},
+	}}
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, nil, "", false, slog.Default())
+	result, err := p.SuggestComponentTags(context.Background(), []string{"kale salad", "raw peach"})
+	if err != nil {
+		t.Fatalf("SuggestComponentTags: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("result = %+v, want 2 entries", result)
+	}
+	if result[0].Name != "kale salad" || len(result[0].Components) != 1 || result[0].Components[0].ComponentID != food.ComponentLeafyGreens {
+		t.Errorf("result[0] = %+v, want only leafy_greens surviving sanitize", result[0])
+	}
+	if len(result[1].Components) != 0 {
+		t.Errorf("result[1] (raw peach) = %+v, want no components", result[1])
+	}
+
+	call := messenger.calls[0]
+	if call.ToolChoice == nil || call.ToolChoice.Type != "tool" || call.ToolChoice.Name != toolSuggestTags {
+		t.Errorf("ToolChoice = %+v, want forced suggest_tags", call.ToolChoice)
+	}
+
+	// SuggestComponentTags(nil) is a no-op, not an error or a wasted call.
+	if empty, err := p.SuggestComponentTags(context.Background(), nil); err != nil || empty != nil {
+		t.Errorf("SuggestComponentTags(nil) = (%+v, %v), want (nil, nil)", empty, err)
+	}
+	if len(messenger.calls) != 1 {
+		t.Errorf("CreateMessage called %d times, want 1 (nil names shouldn't call out)", len(messenger.calls))
+	}
+}
+
+// fakeCanonicalWithTags implements both CanonicalLookuper and the optional
+// componentTagLookuper interface, so execCanonicalLookup's type assertion
+// picks it up and extends the tool result with existing tags.
+type fakeCanonicalWithTags struct {
+	fakeCanonical
+	tags []food.ComponentTag
+}
+
+func (f *fakeCanonicalWithTags) LookupComponentTagsByName(ctx context.Context, normalizedName string) ([]food.ComponentTag, error) {
+	return f.tags, nil
+}
+
+// TestParserCanonicalReuseIncludesComponentTags: on a canonical_lookup hit,
+// the tool result handed back to the model must carry the food's existing
+// component tags so it can reuse them verbatim instead of re-deciding
+// (inclusion phase 2 "tag once, reuse forever").
+func TestParserCanonicalReuseIncludesComponentTags(t *testing.T) {
+	ref, dt := "173735", "Foundation"
+	canon := &fakeCanonicalWithTags{
+		fakeCanonical: fakeCanonical{entry: &food.CanonicalFood{
+			NormalizedName: "kale salad", DisplayName: "kale salad",
+			Source: food.SourceUSDA, SourceRef: &ref, FDCDataType: &dt,
+			Per100g: food.Per100{Calories: 50},
+			Tier:    food.TierHardYes,
+		}},
+		tags: []food.ComponentTag{
+			{NormalizedName: "kale salad", ComponentID: food.ComponentLeafyGreens, GramsPerServing: 30},
+			{NormalizedName: "kale salad", ComponentID: food.ComponentCruciferous, GramsPerServing: 85},
+		},
+	}
+	messenger := &fakeMessenger{responses: []*Response{
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t1", toolCanonicalLookup, map[string]any{"name": "kale salad"})},
+		},
+		{
+			StopReason: "tool_use", Model: "claude-sonnet-5",
+			Content: []json.RawMessage{toolUseBlock("t2", toolRecordMeal, recordMealInput{
+				Items: []food.MealItem{validItem(func(it *food.MealItem) {
+					it.Name = "kale salad"
+					it.Source = food.SourceUSDA
+					it.SourceRef = &ref
+					it.FDCDataType = &dt
+					g := 60
+					it.Grams = &g
+					it.Components = []food.ItemComponent{
+						{ComponentID: food.ComponentLeafyGreens, GramsPerServing: 30},
+						{ComponentID: food.ComponentCruciferous, GramsPerServing: 85},
+					}
+				})},
+			})},
+		},
+	}}
+
+	p := NewParser(messenger, &fakeUSDA{}, &fakeOFF{}, canon, "", false, slog.Default())
+	if _, err := p.ParseText(context.Background(), "kale salad", "2026-07-26", nil); err != nil {
+		t.Fatalf("ParseText: %v", err)
+	}
+
+	msgs := messenger.calls[1].Messages
+	var tr struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(msgs[len(msgs)-1].Content[0], &tr); err != nil {
+		t.Fatalf("decode tool_result: %v", err)
+	}
+	if !strings.Contains(tr.Content, "component_tags") || !strings.Contains(tr.Content, food.ComponentCruciferous) {
+		t.Errorf("canonical_lookup tool_result = %q, want it to carry the food's existing component_tags", tr.Content)
+	}
+}

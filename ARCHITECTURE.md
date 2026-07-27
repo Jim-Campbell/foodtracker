@@ -117,6 +117,129 @@ Worked example: 500 kcal salmon+greens dinner (hard_yes) + 300 kcal white-flour
 roll (soft_no) + 200 kcal Greek yogurt (soft_yes) →
 `(500×100 + 300×25 + 200×75) / 1000 = 72`.
 
+## Inclusion score
+
+A second, **independent** score (`internal/food/inclusion.go`,
+build-prompts/inclusion-spec-20260726.md). Composition (above) asks *of the
+calories I ate, what tier were they?* Inclusion asks *did I eat the handful of
+foods with the strongest evidence behind them?* Calorie-trivial foods (kale,
+berries) can never move a calorie-weighted mean, so this is a structurally
+different construct, not a recalibration of the first one. **The two scores
+are never merged, averaged, or combined into one number** — no code path may
+touch `DayScore`, `TierValue`, or `DaySummary.Score` to compute this.
+
+Five fixed components, each with a weekly target (`ComponentCatalog`, the
+single source of truth for ids/labels/emoji/targets/serving text):
+
+| id | label | target/wk | default g/serving |
+|---|---|---|---|
+| `leafy_greens` | 🥬 Leafy greens | 7 | 30 |
+| `berries` | 🫐 Berries | 5 | 75 |
+| `legumes` | 🫘 Legumes | 5 | 90 |
+| `fatty_fish` | 🐟 Fatty fish | 3 | 100 |
+| `cruciferous` | 🥦 Cruciferous | 4 | 85 |
+
+Nuts/seeds is deliberately excluded (permanently-satisfied target, pure
+noise); EVOO/fermented/whole-grains are phase-2, not built yet.
+
+**Tag layer** — `food_component_tags` maps a logged food to the component(s)
+it counts toward. Keyed on `normalized_name` (not `fdc_id` as in the original
+spec draft) since many logged foods never resolve to an FDC entry; `fdc_id` is
+kept as a nullable secondary key. Lookup order: fdc_id exact hit ->
+normalized_name hit -> untagged. `grams_per_serving` (not `servings_per_ref`)
+keeps the math integer and lets a composite dish carry its own reference.
+Multi-tag is expected (kale is both `leafy_greens` and `cruciferous`).
+
+**Tag capture (phase 2)** — "tag once, persist, reuse forever." The
+`record_meal` tool schema (`internal/ai/tools.go`) carries an optional
+`components` array per item; the parser's system prompt encodes the component
+rules (kale double-counts, whole fruit and starchy veg get nothing, nuts/seeds
+never will, fatty fish is only salmon/sardines/mackerel/herring/anchovies) in
+a string constant (`componentRulesPrompt`) shared verbatim with the batch
+suggester below, so the two never drift. `canonical_lookup`'s result is
+extended with the food's existing tags so a repeat food's proposal is a copy,
+not a re-decision. `MealItem.Components` (`[]ItemComponent{component_id,
+grams_per_serving, source}`) rides the draft through the confirm sheet — the
+PWA's chip picker (draft card and edit-food sheet share one `componentRow()`)
+sets `source: "user"` the moment Jim touches a chip. On save,
+`Service.accreteComponentTags` upserts each item's components into
+`food_component_tags` (`Store.UpsertComponentTag`, keyed
+`(normalized_name, component_id)`); the DB upsert's `WHERE` clause is the
+"never overwritten by an AI proposal" invariant — an incoming `ai` row is
+dropped when the existing row is already `user`-owned, while an incoming
+`user` row always wins. `SanitizeItemComponents` (shared by the parser's
+`finish()` and the service save path) drops an unknown `component_id`,
+clamps `grams_per_serving` to 1–2000, and collapses duplicates, so a
+malformed proposal degrades to omission rather than a 500.
+
+**Backfill** — Settings → "Tag foods" (`GET /api/component-tags/candidates`,
+`Service.TagCandidates`) lists distinct foods from the last 30 days of
+`meal_items` plus every `canonical_foods` row, untagged first, times-logged
+descending, each with the same chip picker. "Suggest tags" posts every
+untagged name in one batch to `POST /api/component-tags/suggest`
+(`Parser.SuggestComponentTags`, one Claude call, `componentRulesPrompt`
+again) and renders the result as unconfirmed dashed chips — nothing persists
+until Jim taps one, same AI-never-writes invariant as everywhere else.
+
+**Math** — all integer, servings tracked as `servings_x100` (hundredths):
+`gramsEaten = grams * fraction_pct / 100`, `servingsX100 = gramsEaten * 100 /
+gramsPerServing`. A per-meal cap (`MaxServingsX100PerMeal = 200`, i.e. 2.00
+servings) limits one `(day, slot)` container's contribution to a component —
+the construct is exposure frequency, not volume, so one huge salad can't
+satisfy the weekly target. Per component, `progressPct = min(servingsX100 /
+target, 100)` — the 1.0 cap is non-negotiable, otherwise six servings of
+berries paper over zero fatty fish. `InclusionScore = sum(progressPct) /
+len(components)`.
+
+**Window** — the rolling last 7 calendar days inclusive of `end`
+(`Service.InclusionWindow`), never a calendar week; food has unlimited slots
+and fully recoverable misses, so nothing is ever written off.
+`ExpiringWhole` reports whole servings logged on `end-6`, the ones aging out
+at the start of tomorrow. `Service.InclusionWeeks` is the one place calendar
+weeks (Mon–Sun) apply to food — the Trends retrospective only.
+
+A food with no grams (`Grams == nil` or `<= 0`) can't contribute; it's counted
+into `UnmeasuredFoods` instead of silently dropped.
+
+**Tunable targets (phase 5)** — `Settings.ComponentTargets` (`component_targets`
+JSONB, migration 014) overrides `ComponentCatalog`'s default per-component
+target; `{}` means "use the defaults." `SanitizeComponentTargets` drops
+unknown ids and values outside 1..21 before a save ever reaches the store, the
+same shape as `SanitizeItemComponents`. `ComputeInclusion` takes the resolved
+override map as its 5th argument — a missing or non-positive entry falls back
+to the catalog default, so `nil` reproduces phase-1 behavior exactly. Targets
+are the *only* tuning knob (spec §3: priority is expressed through
+thresholds, not weights) — there is no per-component weight to sanitize
+alongside it.
+
+**Nudges (phase 5, in-app only)** — there is no push infrastructure in this
+app (`pwa/sw.js` is cache-only: no VAPID keypair, no subscription table, no
+`push`/`notificationclick` handler, no server-side scheduler), so both nudges
+render on the Today card instead of pushing. The honesty constraint (spec §7)
+is enforced structurally: `SupplyNeeds(w InclusionWindow)` and
+`DecisionCandidate(w InclusionWindow)` (`internal/food/inclusion.go`) take an
+`InclusionWindow` as their only argument — never `DaySummary`, a day score,
+calories, or macros — so a reviewer can confirm the constraint from the
+signature alone. Both are computed once in `Service.InclusionWindow` (never in
+`InclusionWeeks` — nudges are Today-only) and ride along as
+`InclusionWindow.SupplyNeeds`/`.DecisionCandidate` in the `/api/inclusion`
+response. `SupplyNeeds` ranks components with `ProgressPct < 100` by relative
+gap `(target - servings) / target` descending, top 3. `DecisionCandidate`
+picks the single largest relative gap among components not `Met`, tying
+toward one with `ExpiringWhole > 0` (a serving aging out within 24h — action
+today prevents the loss). The relative gap is computed from `ServingsX100`
+directly, not from the already-rounded `ProgressPct`, to avoid distorting the
+ranking.
+
+The PWA (`NUDGE_COPY`, `supplyNudgeLine`/`decisionNudgeLine`/`nudgeLineHTML` in
+`pwa/index.html`) decides only *whether* to surface a candidate — using the
+device clock, `Settings.SupplyNudgeDOW`/`NudgeStartHour`/`NudgeEndHour`, a
+per-day localStorage dismissal, and `Settings.NudgesEnabled` — never
+score/calorie/macro data. Tier 1 (supply) fires only on the configured
+weekday; tier 2 (decision) only inside the configured device-local hour
+window, and never while tier 1 is showing. Both render as one line directly
+under the `FOOD · LAST 7 DAYS` card, dismissible for the day.
+
 ## Database schema
 
 The initial schema is below (migration 001). Migrations 009–012 evolved it
@@ -211,7 +334,7 @@ CREATE TABLE favorites (
 );
 ```
 
-### Schema evolution (migrations 009–012)
+### Schema evolution (migrations 009–014)
 
 - **009 — resolution provenance** on `meal_items`: `fdc_id`, `fdc_data_type`
   (`Branded`|`Foundation`|`SR Legacy`|`Survey (FNDDS)`), `resolution_tier`
@@ -229,6 +352,16 @@ CREATE TABLE favorites (
   `(day, slot)` into one container; added the unique index
   `(day, COALESCE(slot,''))` and `favorites.kind`. The existing ~2 weeks of data
   were flattened in place.
+- **013 — `food_component_tags`**: the inclusion-score tag layer (see
+  **Inclusion score** above). `(normalized_name, component_id)` unique;
+  `fdc_id` nullable secondary key; `grams_per_serving` 1–2000;
+  `tag_source` `ai`|`user`.
+- **014 — tunable inclusion targets + nudge settings** on `settings`:
+  `component_targets` JSONB (default `{}`, overrides `ComponentCatalog`'s
+  per-component target), `supply_nudge_dow` INT (default 6, Saturday),
+  `nudge_start_hour`/`nudge_end_hour` INT (default 11/13), `nudges_enabled`
+  BOOLEAN (default true). See **Inclusion score** → Tunable targets/Nudges
+  above.
 
 ## API
 
@@ -276,6 +409,21 @@ GET    /api/export          → full-DB JSON download (meals+items+weights+favor
 GET    /api/export/range     → {start, end} earliest/latest logged day ({} if empty)
 GET    /api/export/analysis?start=&end=  → reshaped LLM-ready JSON download (dates
                                default to the full logged range)
+
+GET    /api/components                  → ComponentDef catalog (ids, labels, emoji, targets, serving text)
+GET    /api/inclusion?end=YYYY-MM-DD    → InclusionWindow, rolling 7 days ending `end` (default today)
+GET    /api/inclusion/weeks?start=&end= → [InclusionWeek], completed Mon-Sun weeks only, newest first
+GET    /api/component-tags              → [ComponentTag], newest updated first
+PUT    /api/component-tags   {normalized_name, fdc_id?, tags:[{component_id, grams_per_serving}]}
+                                         → 204 (replaces that food's whole tag set, tag_source "user")
+DELETE /api/component-tags/{name}       → 204 (clears a food's tags)
+GET    /api/component-tags/candidates   → [TagCandidate], distinct logged foods (last 30 days +
+                                           canonical_foods), untagged first, times-logged descending —
+                                           Settings → "Tag foods" backfill screen (phase 2 §4)
+POST   /api/component-tags/suggest {names:[string]} → [{name, components}], one Claude call proposing
+                                           tags for a batch of names; 503 when AI isn't configured.
+                                           Nothing is persisted — the PWA confirms each chip before
+                                           it PUTs /api/component-tags.
 ```
 
 The two parse endpoints stream progress so the PWA can narrate the wait
@@ -301,7 +449,8 @@ not emitted by the model):
               "portion_source": "estimated", "confidence": "high",
               "match_description": "Rice, brown, long-grain, cooked",
               "alternatives": [{ "fdc_id": 169703, "description": "Rice, white, cooked",
-                                 "fdc_data_type": "SR Legacy", "per_100g": { ... } }] }],
+                                 "fdc_data_type": "SR Legacy", "per_100g": { ... } }],
+              "components": [{ "component_id": "leafy_greens", "grams_per_serving": 30 }] }],
   "notes": "Assumed cooked; say 'dry' if it was measured dry.",
   "ai_model": "claude-sonnet-5",
   "ai_raw": { ... }
@@ -377,7 +526,9 @@ One agentic Claude conversation per parse, mirroring the tool-loop in
   - `record_meal(items, notes)` → terminal tool; ends the loop and yields the
     draft. For usda/off foods the model supplies `source_ref` + `fdc_data_type`
     + `grams` + `alternative_fdc_ids` and **omits the macro fields** (Go
-    computes them); it gives numbers only for ai/label/web foods.
+    computes them); it gives numbers only for ai/label/web foods. Each item may
+    also carry `components` (inclusion phase 2, see **Inclusion score** above)
+    — most foods omit it.
   - `web_search` (Anthropic's server tool, executed API-side; `AI_WEB_SEARCH=off`
     disables) → chains/restaurants skip USDA and use the published nutrition
     directly; any other brand name (packaged goods, store brands, local
@@ -440,7 +591,29 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   and a **saturated-fat** actual/ceiling line (reddened when over). An
   **outlier line** (from `day.anomaly`) appears only on an off day — one
   expandable line naming the 2–3 foods that drove a low score or over-ceiling
-  sat fat. Below: each slot shows its **foods flat**, every food tappable to
+  sat fat. Below Training (see below): a **`Food · last 7 days`** card
+  (`foodCardHTML()`, phase 3) showing the inclusion score's five components as
+  a **meter, not a grid** — the one constraint that decided this design. The
+  Training card answers *when* (a Mon–Sun day grid); this card answers *how
+  many* (a dot meter with no day-of-week axis at all), so the two cards never
+  present adjacent columns that mean different things. Each row's dot count
+  **is** that component's weekly target (`fcRowHTML()`; 7/5/5/3/4, so row
+  lengths differ by design and are never padded to a common width): filled ●
+  for a whole serving in the rolling window, the trailing `expiring_whole`
+  filled dots rendered ◐ as a **decay preview** (servings logged on `end-6`
+  that age out at the start of tomorrow — pure information, no nagging), open
+  ○ for the remainder. A component at or past target shows exactly `target`
+  filled dots plus ✓ and never renders overflow — the numeral on the right
+  (`fmtServingsX100()`, string-formatted from `servings_x100` with no float
+  arithmetic) caps at `target` the same way. The inclusion score itself sits
+  quietly in the card header (`.fc-score`, deliberately unstyled next to the
+  hero's bold `.score-badge`) and taps to `showInclusionInfo()`, a two-line
+  dialog contrasting it with composition. Loads lazily like `S.exercise`
+  (`loadInclusion()` → `GET /api/inclusion`, no day param — the rolling window
+  always ends at real today, independent of the day being viewed) and
+  invalidates on food save/delete/day change so a saved salad moves the dots
+  without a reload. Fresh `.fc-*` CSS throughout; `.ti-*` (Training) is
+  untouched. Below: each slot shows its **foods flat**, every food tappable to
   edit; the slot header carries ☆ (favorite the meal) and 🗑 (clear the slot).
   Bottom: an always-visible log bar — text, 🎤 mic, 📷 camera, ⭐ favorites,
   ⚖️ weight. Day switcher (‹ today ›) to log to yesterday.
@@ -455,6 +628,15 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
 - **Editing.** Tapping a food opens a single-food sheet (fix grams/fraction/
   tier, swap match, mark weighed, move slot via the slot picker, Delete). A
   wrong match corrected here rewrites the food and accretes to canonical.
+- **Inclusion-component chips (phase 2).** Below the match line, `componentRow()`
+  — shared by the draft card and the edit-food sheet, both render through
+  `draftItemRow()` — shows proposed/confirmed tags as filled chips (serving
+  figure computed live from grams × fraction, so editing portion updates it
+  with no re-parse) plus a `+` opening the five-way picker. Touching any chip
+  marks it `source: "user"`. Settings → **"Tag foods…"** is the phase-2
+  backfill screen: candidates untagged-first, the same picker per row, and a
+  **"Suggest tags"** button that batches every untagged name into one AI call
+  and renders the result as unconfirmed dashed chips Jim accepts or rejects.
 - **Favorites.** ☆ a single food from its edit sheet (a **Food** favorite), or
   ☆ a whole slot from the day view (a **Meal** favorite). The ⭐ log-bar button
   opens the favorites sheet split into **Meals** and **Foods** sections; tapping
@@ -465,7 +647,16 @@ Colors/typography: clean, large type, thumb-reachable controls; dark mode via
   dashed line, protein-gram label above each stack); weight line chart with
   optional goal line; simple inline SVG, no chart library. Month grid follows
   the finance convention of being honest about the in-progress day/month —
-  averages count only completed days.
+  averages count only completed days. Below Weight (Food tab only, phase 4):
+  an **inclusion weekly-recap** card (`inclusionWeeksCardHTML()`) — the one
+  place calendar weeks apply to food (`GET /api/inclusion/weeks`, fetched
+  alongside the range/weights calls in `loadTrends()`), never the rolling
+  window Today uses. One block per completed Mon–Sun week (`Week of <date>`,
+  `n/5 components`), each component as `count/target` with ✓ on a hit —
+  reuses `.fc-row`/`.fc-label`/`.fc-num` from the Today card but drops
+  `.fc-dots`, since this reads as a table-ish recap, not a second meter. Week
+  toggle shows the single most recent completed week, Month shows the last
+  four or five; the in-progress week never appears.
 - **Settings.** Calorie target, protein target (entered in grams, stored mg),
   saturated-fat ceiling (grams), goal weight (entered lb, stored grams), weekly
   training targets, a Data card

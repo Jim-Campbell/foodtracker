@@ -53,6 +53,24 @@ type CanonicalLookuper interface {
 	LookupCanonical(ctx context.Context, normalizedName string) (*food.CanonicalFood, error)
 }
 
+// componentTagLookuper optionally extends CanonicalLookuper with the
+// inclusion-tag reuse lookup (inclusion phase 2 "tag once, reuse forever").
+// A type assertion in execCanonicalLookup checks for it rather than adding a
+// parameter to NewParser, since every concrete store already implements both
+// methods and callers (tests especially) shouldn't need to wire a second
+// dependency just to satisfy the interface.
+type componentTagLookuper interface {
+	LookupComponentTagsByName(ctx context.Context, normalizedName string) ([]food.ComponentTag, error)
+}
+
+// canonicalLookupResult is what canonical_lookup hands back to the model: the
+// cached food plus any existing component tags, so a repeat food's tags
+// never need re-deciding.
+type canonicalLookupResult struct {
+	food.CanonicalFood
+	ComponentTags []food.ComponentTag `json:"component_tags,omitempty"`
+}
+
 // Parser runs one agentic Claude conversation per meal parse: send messages,
 // execute any tool calls, repeat until record_meal is called (or the round
 // cap forces it).
@@ -335,7 +353,17 @@ func (p *Parser) execCanonicalLookup(ctx context.Context, block blockMeta, resol
 			SugarMg: cf.Per100g.SugarMg, SodiumMg: cf.Per100g.SodiumMg,
 		}
 	}
-	body, err := json.Marshal(cf)
+	result := canonicalLookupResult{CanonicalFood: *cf}
+	if lookuper, ok := p.canonical.(componentTagLookuper); ok {
+		tags, err := lookuper.LookupComponentTagsByName(ctx, cf.NormalizedName)
+		if err != nil {
+			p.log.Warn("component tag lookup failed", "name", cf.NormalizedName, "error", err)
+		} else {
+			result.ComponentTags = tags
+		}
+	}
+
+	body, err := json.Marshal(result)
 	if err != nil {
 		return ToolResultBlock(block.ID, fmt.Sprintf("failed to encode canonical result: %v", err), true)
 	}
@@ -472,6 +500,7 @@ func (p *Parser) finish(in *recordMealInput, model string, messages []Message, c
 		resolveNutrition(it, resolved, &extraNotes)
 		setProvenance(it)
 		attachMatchInfo(it, search)
+		it.Components = food.SanitizeItemComponents(it.Components)
 		if len(it.Micros) == 0 && it.SourceRef != nil && *it.SourceRef != "" {
 			if payload, ok := cache[it.Source+":"+*it.SourceRef]; ok {
 				it.Micros = payload
@@ -694,6 +723,8 @@ TIERS
 - The framework's "Default Rule" cascade at the top decides any food not explicitly listed -- apply it rather than defaulting to neutral. Reserve "neutral" for a food the cascade genuinely leaves unaddressed. tier_reason is five words or fewer, either way.
 - Set tier_source: "table" when the food is explicitly listed in the framework's Hard/Soft sections; "cascade" when you applied the Default Rule to an unlisted food.
 
+%s
+
 HOW NUTRITION IS COMPUTED -- you resolve, the app does the arithmetic
 - For usda and off items you do NOT compute calories or macros. Put the chosen FDC id (digits only) in source_ref, the result's data_type in fdc_data_type, and the FULL-PORTION weight in grams -- the app multiplies the entry's per-100g values by those grams itself. Resolve grams from the search result's "portions" household-measure weights when present (e.g. "1/4 cup" -> the matching portion's gram_weight) instead of guessing; this is what makes a quarter cup and a half cup differ correctly. You may omit the calorie/macro fields entirely for these items.
 - For ai, label, and web items there is no database entry to scale, so you DO provide full-portion calories and every macro yourself.
@@ -728,5 +759,5 @@ PHOTOS -- when the first message includes an image, decide which of these it is 
 FINISHING
 - notes is a glance-line for Jim, not a report: at most one short sentence, and only for something he couldn't guess himself (an unusual portion assumption, ambiguous wording, a failed lookup). When the read was straightforward, return an empty string. Never re-list the items or narrate your process.
 - Never write prose around tool calls. A response that calls a tool -- including record_meal/log_exercise -- must contain ONLY the tool call(s), no text before or after. Nobody reads that text; every token of it just makes the parse slower.
-- Call exactly one of record_meal or log_exercise, as your final action, to submit the parse.`, day, docs.DietFramework, canonicalGuidance, webGuidance)
+- Call exactly one of record_meal or log_exercise, as your final action, to submit the parse.`, day, docs.DietFramework, componentRulesPrompt, canonicalGuidance, webGuidance)
 }

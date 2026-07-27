@@ -20,6 +20,7 @@ type fakeStore struct {
 	nextExID   int64
 	nextItemID int64
 	canonical  map[string]*CanonicalFood
+	compTags   map[string][]ComponentTag
 }
 
 func newFakeStore() *fakeStore {
@@ -29,11 +30,68 @@ func newFakeStore() *fakeStore {
 		settings: Settings{
 			CalorieTarget: 1800, ProteinTargetMg: 165000, SatFatTargetMg: 14000,
 			CardioWeeklyTarget: 3, StrengthWeeklyTarget: 2, YogaWeeklyTarget: 2, MeditationWeeklyDays: 7, PTWeeklyDays: 7,
+			SupplyNudgeDOW: 6, NudgeStartHour: 11, NudgeEndHour: 13, NudgesEnabled: true,
 		},
 		favorites: map[int64]*Favorite{},
 		exercise:  map[int64]*ExerciseSession{},
 		canonical: map[string]*CanonicalFood{},
+		compTags:  map[string][]ComponentTag{},
 	}
+}
+
+func (f *fakeStore) ListComponentTags(ctx context.Context) ([]ComponentTag, error) {
+	var out []ComponentTag
+	for _, tags := range f.compTags {
+		out = append(out, tags...)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) SetComponentTags(ctx context.Context, normalizedName string, fdcID *int64, tags []ComponentTag, source string) error {
+	if len(tags) == 0 {
+		delete(f.compTags, normalizedName)
+		return nil
+	}
+	out := make([]ComponentTag, len(tags))
+	for i, t := range tags {
+		out[i] = ComponentTag{
+			NormalizedName:  normalizedName,
+			FDCID:           fdcID,
+			ComponentID:     t.ComponentID,
+			GramsPerServing: t.GramsPerServing,
+			TagSource:       source,
+		}
+	}
+	f.compTags[normalizedName] = out
+	return nil
+}
+
+func (f *fakeStore) LookupComponentTagsByName(ctx context.Context, normalizedName string) ([]ComponentTag, error) {
+	return append([]ComponentTag{}, f.compTags[normalizedName]...), nil
+}
+
+func (f *fakeStore) UpsertComponentTag(ctx context.Context, t ComponentTag, source string) error {
+	existing := f.compTags[t.NormalizedName]
+	for i, e := range existing {
+		if e.ComponentID != t.ComponentID {
+			continue
+		}
+		if e.TagSource == TagSourceUser && source != TagSourceUser {
+			return nil // never overwrite a user row with an ai proposal
+		}
+		fdcID := e.FDCID
+		if t.FDCID != nil {
+			fdcID = t.FDCID
+		}
+		existing[i] = ComponentTag{
+			NormalizedName: t.NormalizedName, FDCID: fdcID, ComponentID: t.ComponentID,
+			GramsPerServing: t.GramsPerServing, TagSource: source,
+		}
+		return nil
+	}
+	t.TagSource = source
+	f.compTags[t.NormalizedName] = append(existing, t)
+	return nil
 }
 
 func (f *fakeStore) UpsertCanonical(ctx context.Context, c *CanonicalFood) error {

@@ -111,3 +111,33 @@ func (s *Service) accreteCanonical(ctx context.Context, items []MealItem) {
 		}
 	}
 }
+
+// accreteComponentTags fans each saved item's proposed/confirmed inclusion
+// component tags out into food_component_tags — "tag once, persist, reuse
+// forever" (inclusion-spec-20260726.md §5). Unlike accreteCanonical this runs
+// for every source, including ai/manual composite dishes: a homemade lentil
+// soup is exactly the kind of food this table exists to capture, and the
+// model never writes to the DB itself, so a save is the only place a proposal
+// becomes a durable tag. Failures are logged and swallowed, same as canonical
+// accretion.
+func (s *Service) accreteComponentTags(ctx context.Context, items []MealItem) {
+	for _, it := range items {
+		if len(it.Components) == 0 {
+			continue
+		}
+		name := NormalizeFoodName(strings.TrimSpace(it.Name))
+		if name == "" {
+			continue
+		}
+		for _, c := range it.Components {
+			source := c.Source
+			if source == "" {
+				source = TagSourceAI
+			}
+			tag := ComponentTag{NormalizedName: name, FDCID: it.FDCID, ComponentID: c.ComponentID, GramsPerServing: c.GramsPerServing}
+			if err := s.store.UpsertComponentTag(ctx, tag, source); err != nil {
+				s.log.Warn("component tag accretion failed", "food", it.Name, "component", c.ComponentID, "error", err)
+			}
+		}
+	}
+}

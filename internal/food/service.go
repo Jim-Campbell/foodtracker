@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 )
@@ -61,6 +62,7 @@ func validateFood(it *MealItem) error {
 	if !validInputKinds[it.InputKind] {
 		return fmt.Errorf("invalid: bad input_kind")
 	}
+	it.Components = SanitizeItemComponents(it.Components)
 	errs, warnings := ValidateItem(*it)
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid: food %q: %s", it.Name, strings.Join(errs, "; "))
@@ -91,6 +93,7 @@ func (s *Service) AddFoods(ctx context.Context, day string, slot *string, items 
 		return nil, err
 	}
 	s.accreteCanonical(ctx, items)
+	s.accreteComponentTags(ctx, items)
 	return meal, nil
 }
 
@@ -156,6 +159,7 @@ func (s *Service) UpdateFood(ctx context.Context, day string, slot *string, it *
 	}
 	// A corrected match re-logs the food, propagating the new numbers forward.
 	s.accreteCanonical(ctx, []MealItem{*it})
+	s.accreteComponentTags(ctx, []MealItem{*it})
 	return nil
 }
 
@@ -278,6 +282,13 @@ func (s *Service) UpdateSettings(ctx context.Context, in *Settings) (*Settings, 
 	if in.CardioWeeklyTarget < 0 || in.StrengthWeeklyTarget < 0 || in.YogaWeeklyTarget < 0 || in.MeditationWeeklyDays < 0 || in.PTWeeklyDays < 0 {
 		return nil, fmt.Errorf("invalid: weekly targets must be non-negative")
 	}
+	if in.SupplyNudgeDOW < 0 || in.SupplyNudgeDOW > 6 {
+		return nil, fmt.Errorf("invalid: supply_nudge_dow must be 0..6")
+	}
+	if in.NudgeStartHour < 0 || in.NudgeStartHour > 23 || in.NudgeEndHour < 0 || in.NudgeEndHour > 23 {
+		return nil, fmt.Errorf("invalid: nudge hours must be 0..23")
+	}
+	in.ComponentTargets = SanitizeComponentTargets(in.ComponentTargets)
 	if err := s.store.UpdateSettings(ctx, in); err != nil {
 		return nil, err
 	}
@@ -506,6 +517,209 @@ func (s *Service) RangeSummary(ctx context.Context, start, end string) ([]RangeD
 	return rows, nil
 }
 
+// ---- inclusion (component tags + rolling/weekly score) ----
+
+func (s *Service) ListComponentTags(ctx context.Context) ([]ComponentTag, error) {
+	tags, err := s.store.ListComponentTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tags == nil {
+		tags = []ComponentTag{}
+	}
+	return tags, nil
+}
+
+// SetComponentTags replaces a food's whole tag set, tag_source "user". An
+// empty tags slice clears the food's tags entirely.
+func (s *Service) SetComponentTags(ctx context.Context, normalizedName string, fdcID *int64, tags []ComponentTag) error {
+	name := NormalizeFoodName(strings.TrimSpace(normalizedName))
+	if name == "" {
+		return fmt.Errorf("invalid: normalized_name is required")
+	}
+	for _, t := range tags {
+		if !validComponentIDs[t.ComponentID] {
+			return fmt.Errorf("invalid: bad component_id %q", t.ComponentID)
+		}
+		if t.GramsPerServing < 1 || t.GramsPerServing > 2000 {
+			return fmt.Errorf("invalid: grams_per_serving must be between 1 and 2000")
+		}
+	}
+	return s.store.SetComponentTags(ctx, name, fdcID, tags, TagSourceUser)
+}
+
+func (s *Service) DeleteComponentTags(ctx context.Context, normalizedName string) error {
+	name := NormalizeFoodName(strings.TrimSpace(normalizedName))
+	if name == "" {
+		return fmt.Errorf("invalid: normalized_name is required")
+	}
+	return s.store.SetComponentTags(ctx, name, nil, nil, TagSourceUser)
+}
+
+// InclusionWindow computes the rolling-7-day inclusion score ending on end
+// (defaults to today). Independent of and never merged with DaySummary.Score.
+func (s *Service) InclusionWindow(ctx context.Context, end string) (*InclusionWindow, error) {
+	if strings.TrimSpace(end) == "" {
+		end = time.Now().Format("2006-01-02")
+	}
+	if err := validDate(end); err != nil {
+		return nil, err
+	}
+	endT, _ := time.Parse("2006-01-02", end)
+	start := endT.AddDate(0, 0, -6).Format("2006-01-02")
+
+	meals, err := s.store.ListMealsRange(ctx, start, end)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := s.store.ListComponentTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := s.store.GetSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	w := ComputeInclusion(meals, tags, start, end, settings.ComponentTargets)
+	// Nudge candidates are Today-only (the rolling window), never computed for
+	// the Trends weekly retrospective (InclusionWeeks below).
+	w.SupplyNeeds = SupplyNeeds(w)
+	w.DecisionCandidate = DecisionCandidate(w)
+	return &w, nil
+}
+
+// InclusionWeeks returns completed Mon-Sun calendar weeks whose full span
+// falls within [start, end], newest first — the Trends retrospective (spec
+// §8, the only place calendar weeks apply to food).
+func (s *Service) InclusionWeeks(ctx context.Context, start, end string) ([]InclusionWeek, error) {
+	if err := validDate(start); err != nil {
+		return nil, err
+	}
+	if err := validDate(end); err != nil {
+		return nil, err
+	}
+	st, _ := time.Parse("2006-01-02", start)
+	en, _ := time.Parse("2006-01-02", end)
+
+	type bounds struct{ start, end string }
+	var weeks []bounds
+	for monday := mondayOnOrAfter(st); ; monday = monday.AddDate(0, 0, 7) {
+		sunday := monday.AddDate(0, 0, 6)
+		if sunday.After(en) {
+			break
+		}
+		weeks = append(weeks, bounds{monday.Format("2006-01-02"), sunday.Format("2006-01-02")})
+	}
+	if len(weeks) == 0 {
+		return []InclusionWeek{}, nil
+	}
+
+	meals, err := s.store.ListMealsRange(ctx, weeks[0].start, weeks[len(weeks)-1].end)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := s.store.ListComponentTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	settings, err := s.store.GetSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]InclusionWeek, len(weeks))
+	for i, b := range weeks {
+		win := ComputeInclusion(meals, tags, b.start, b.end, settings.ComponentTargets)
+		var hit int
+		for _, c := range win.Components {
+			if c.Met {
+				hit++
+			}
+		}
+		out[i] = InclusionWeek{WeekStart: b.start, ComponentsHit: hit, Components: win.Components}
+	}
+	// Newest first.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
+// TagCandidates lists distinct foods for the Settings → "Tag foods" backfill
+// screen (spec §4): every food logged in the last 30 days plus every
+// accreted canonical food (so a food logged once, long ago, but reused
+// heavily via accretion still surfaces), untagged foods first and
+// times-logged descending within each group — the highest-leverage foods
+// land at the top. Pure Go aggregation over three existing store reads, same
+// style as ComputeInclusion.
+func (s *Service) TagCandidates(ctx context.Context) ([]TagCandidate, error) {
+	end := time.Now().Format("2006-01-02")
+	start := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+	meals, err := s.store.ListMealsRange(ctx, start, end)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := s.store.ListAllCanonical(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := s.store.ListComponentTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	byName := map[string]*TagCandidate{}
+	var order []string
+	touch := func(displayName string, fdcID *int64) *TagCandidate {
+		norm := NormalizeFoodName(strings.TrimSpace(displayName))
+		if norm == "" {
+			return nil
+		}
+		c, ok := byName[norm]
+		if !ok {
+			c = &TagCandidate{NormalizedName: norm, DisplayName: strings.TrimSpace(displayName)}
+			byName[norm] = c
+			order = append(order, norm)
+		}
+		if fdcID != nil {
+			c.FDCID = fdcID
+		}
+		return c
+	}
+	for _, m := range meals {
+		for _, it := range m.Items {
+			if c := touch(it.Name, it.FDCID); c != nil {
+				c.TimesLogged++
+			}
+		}
+	}
+	for _, cf := range canonical {
+		c := touch(cf.DisplayName, cf.FDCID)
+		if c != nil && cf.TimesLogged > c.TimesLogged {
+			c.TimesLogged = cf.TimesLogged
+		}
+	}
+	tagsByName := map[string][]ComponentTag{}
+	for _, t := range tags {
+		tagsByName[t.NormalizedName] = append(tagsByName[t.NormalizedName], t)
+	}
+
+	out := make([]TagCandidate, 0, len(order))
+	for _, norm := range order {
+		c := *byName[norm]
+		c.Tags = tagsByName[norm]
+		out = append(out, c)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		iTagged, jTagged := len(out[i].Tags) > 0, len(out[j].Tags) > 0
+		if iTagged != jTagged {
+			return !iTagged // untagged first
+		}
+		return out[i].TimesLogged > out[j].TimesLogged
+	})
+	return out, nil
+}
+
 // ---- export ----
 
 func (s *Service) Export(ctx context.Context) (*ExportDoc, error) {
@@ -545,13 +759,18 @@ func (s *Service) Export(ctx context.Context) (*ExportDoc, error) {
 	if canonical == nil {
 		canonical = []CanonicalFood{}
 	}
+	componentTags, err := s.ListComponentTags(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &ExportDoc{
-		ExportedAt: time.Now().UTC(),
-		Settings:   *settings,
-		Weights:    weights,
-		Meals:      meals,
-		Favorites:  favorites,
-		Exercise:   exercise,
-		Canonical:  canonical,
+		ExportedAt:    time.Now().UTC(),
+		Settings:      *settings,
+		Weights:       weights,
+		Meals:         meals,
+		Favorites:     favorites,
+		Exercise:      exercise,
+		Canonical:     canonical,
+		ComponentTags: componentTags,
 	}, nil
 }

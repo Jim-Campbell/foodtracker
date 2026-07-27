@@ -74,3 +74,36 @@ commit. Design is settled in the prototype artifact
 E1 is curl-testable with no PWA. E3 and E4 both depend on E1–E2 but not on each
 other. Exercise never touches the calorie budget — that separation is an
 invariant every phase must preserve.
+
+## Inclusion score expansion (post-launch feature)
+
+Adds a **second, independent** food score: the existing calorie-weighted
+composition score answers *of the calories I ate, what tier were they?*, which
+is structurally incapable of registering a cup of kale. The inclusion score
+counts servings of five high-evidence components over a rolling 7-day window.
+Design source of truth: `inclusion-spec-20260726.md` (Jim's spec, copied into
+the repo verbatim). Same rules as above — strictly sequential, fresh session per
+phase, gate with `go build ./... && go test ./...` + the acceptance checklist +
+a clean commit.
+
+| Phase | File | Delivers |
+|---|---|---|
+| I1 | inclusion-1-tags-and-score.md | `food_component_tags` schema, component catalog, integer serving math, `/api/inclusion*`, tests |
+| I2 | inclusion-2-tag-capture.md | Parser proposes tags, draft-card chips, canonical reuse, Settings → Tag foods backfill |
+| I3 | inclusion-3-today-card.md | `FOOD · LAST 7 DAYS` dot-meter card on Today, decay preview |
+| I4 | inclusion-4-trends.md | Weekly (Mon–Sun) inclusion retrospective in Trends → Food |
+| I5 | inclusion-5-nudges.md | In-app supply/decision nudges (no push), tunable component targets + nudge Settings |
+| I5 | inclusion-5-nudges.md | In-app supply + decision nudges, tunable targets, nudge settings |
+
+I1 is curl-testable with no PWA. I2 is the substantive work — the score is only
+as good as the tag layer behind it. Two invariants every phase must preserve:
+**the two scores are never merged**, and **nudges are driven by the inclusion
+score only, never the composition score** (logging honestly must never cost
+anything).
+
+Two prompts depart from the spec on purpose, both documented in I1: tags are
+keyed on `normalized_name` (not `fdc_id`, which most logged foods lack) and
+store `grams_per_serving` (not `servings_per_ref`, which can't be derived from a
+gram portion without floats). I5 also swaps push notifications for in-app
+surfaces, since the app has no push infrastructure — the selection logic is
+built exactly as specced so push can be added later without touching it.

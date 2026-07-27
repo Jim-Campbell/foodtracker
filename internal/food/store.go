@@ -53,4 +53,18 @@ type Store interface {
 	DeleteExercise(ctx context.Context, id int64) error
 	ListExerciseRange(ctx context.Context, start, end string) ([]ExerciseSession, error)
 	ListAllExercise(ctx context.Context) ([]ExerciseSession, error)
+
+	// Component tags (inclusion phase 1): the food -> component mapping.
+	// SetComponentTags replaces the whole tag set for a normalized name.
+	ListComponentTags(ctx context.Context) ([]ComponentTag, error)
+	SetComponentTags(ctx context.Context, normalizedName string, fdcID *int64, tags []ComponentTag, source string) error
+	// LookupComponentTagsByName fetches one food's existing tags by normalized
+	// name (inclusion phase 2: the canonical_lookup tool hands these back to
+	// the model for verbatim reuse). Empty, not an error, on no tags.
+	LookupComponentTagsByName(ctx context.Context, normalizedName string) ([]ComponentTag, error)
+	// UpsertComponentTag inserts or updates a single (normalized_name,
+	// component_id) row from item-level accretion on save (inclusion phase 2):
+	// an incoming "ai" source never overwrites an existing "user" row, while an
+	// incoming "user" source always wins and updates grams/fdc_id.
+	UpsertComponentTag(ctx context.Context, tag ComponentTag, source string) error
 }

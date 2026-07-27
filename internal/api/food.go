@@ -56,6 +56,16 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/export/range", h.exportRange)
 	r.Get("/export/analysis", h.exportAnalysis)
 
+	// Inclusion score (inclusion phase 1): independent of the day/range
+	// composition score above, never merged with it.
+	r.Get("/components", h.listComponents)
+	r.Get("/inclusion", h.inclusionWindow)
+	r.Get("/inclusion/weeks", h.inclusionWeeks)
+	r.Get("/component-tags", h.listComponentTags)
+	r.Put("/component-tags", h.setComponentTags)
+	r.Delete("/component-tags/{name}", h.deleteComponentTags)
+	r.Get("/component-tags/candidates", h.componentTagCandidates)
+
 	h.exerciseRoutes(r)
 }
 
@@ -409,6 +419,91 @@ func (h *Handler) exportAnalysis(w http.ResponseWriter, r *http.Request) {
 	filename := fmt.Sprintf("food-analysis-%s_%s.json", start, end)
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	writeJSON(w, http.StatusOK, doc)
+}
+
+// ---- inclusion (component tags + rolling/weekly score) ----
+
+func (h *Handler) listComponents(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, food.ComponentCatalog)
+}
+
+func (h *Handler) inclusionWindow(w http.ResponseWriter, r *http.Request) {
+	end := r.URL.Query().Get("end")
+	win, err := h.svc.InclusionWindow(r.Context(), end)
+	if err != nil {
+		h.fail(w, "inclusion window", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, win)
+}
+
+func (h *Handler) inclusionWeeks(w http.ResponseWriter, r *http.Request) {
+	start := r.URL.Query().Get("start")
+	end := r.URL.Query().Get("end")
+	if start == "" || end == "" {
+		writeError(w, http.StatusBadRequest, "start and end are required")
+		return
+	}
+	weeks, err := h.svc.InclusionWeeks(r.Context(), start, end)
+	if err != nil {
+		h.fail(w, "inclusion weeks", err)
+		return
+	}
+	if weeks == nil {
+		weeks = []food.InclusionWeek{}
+	}
+	writeJSON(w, http.StatusOK, weeks)
+}
+
+func (h *Handler) listComponentTags(w http.ResponseWriter, r *http.Request) {
+	tags, err := h.svc.ListComponentTags(r.Context())
+	if err != nil {
+		h.fail(w, "list component tags", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tags)
+}
+
+type setComponentTagsRequest struct {
+	NormalizedName string              `json:"normalized_name"`
+	FDCID          *int64              `json:"fdc_id"`
+	Tags           []food.ComponentTag `json:"tags"`
+}
+
+func (h *Handler) setComponentTags(w http.ResponseWriter, r *http.Request) {
+	var req setComponentTagsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := h.svc.SetComponentTags(r.Context(), req.NormalizedName, req.FDCID, req.Tags); err != nil {
+		h.fail(w, "set component tags", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// componentTagCandidates serves the Settings → "Tag foods" backfill screen
+// (inclusion phase 2 §4): distinct logged foods, untagged first.
+func (h *Handler) componentTagCandidates(w http.ResponseWriter, r *http.Request) {
+	candidates, err := h.svc.TagCandidates(r.Context())
+	if err != nil {
+		h.fail(w, "list tag candidates", err)
+		return
+	}
+	if candidates == nil {
+		candidates = []food.TagCandidate{}
+	}
+	writeJSON(w, http.StatusOK, candidates)
+}
+
+func (h *Handler) deleteComponentTags(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if err := h.svc.DeleteComponentTags(r.Context(), name); err != nil {
+		h.fail(w, "delete component tags", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- errors ----

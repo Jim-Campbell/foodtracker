@@ -571,32 +571,50 @@ func (d *DB) DeleteWeight(ctx context.Context, day string) error {
 
 func (d *DB) GetSettings(ctx context.Context) (*food.Settings, error) {
 	s := &food.Settings{}
+	var componentTargets []byte
 	err := d.pool.QueryRow(ctx, `
 		SELECT calorie_target, protein_target_mg, sat_fat_target_mg, weight_target_g,
 		       cardio_weekly_target, strength_weekly_target, yoga_weekly_target, meditation_weekly_days,
 		       pt_weekly_days,
+		       component_targets, supply_nudge_dow, nudge_start_hour, nudge_end_hour, nudges_enabled,
 		       updated_at
 		FROM settings WHERE id = 1`).
 		Scan(&s.CalorieTarget, &s.ProteinTargetMg, &s.SatFatTargetMg, &s.WeightTargetG,
 			&s.CardioWeeklyTarget, &s.StrengthWeeklyTarget, &s.YogaWeeklyTarget, &s.MeditationWeeklyDays,
 			&s.PTWeeklyDays,
+			&componentTargets, &s.SupplyNudgeDOW, &s.NudgeStartHour, &s.NudgeEndHour, &s.NudgesEnabled,
 			&s.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get settings: %w", err)
+	}
+	if len(componentTargets) > 0 {
+		if err := json.Unmarshal(componentTargets, &s.ComponentTargets); err != nil {
+			return nil, fmt.Errorf("decode component_targets: %w", err)
+		}
 	}
 	return s, nil
 }
 
 func (d *DB) UpdateSettings(ctx context.Context, s *food.Settings) error {
-	_, err := d.pool.Exec(ctx, `
+	ct := s.ComponentTargets
+	if ct == nil {
+		ct = map[string]int{}
+	}
+	componentTargets, err := json.Marshal(ct)
+	if err != nil {
+		return fmt.Errorf("encode component_targets: %w", err)
+	}
+	_, err = d.pool.Exec(ctx, `
 		UPDATE settings SET calorie_target = $1, protein_target_mg = $2, sat_fat_target_mg = $3, weight_target_g = $4,
 		    cardio_weekly_target = $5, strength_weekly_target = $6, yoga_weekly_target = $7, meditation_weekly_days = $8,
 		    pt_weekly_days = $9,
+		    component_targets = $10, supply_nudge_dow = $11, nudge_start_hour = $12, nudge_end_hour = $13, nudges_enabled = $14,
 		    updated_at = NOW()
 		WHERE id = 1`,
 		s.CalorieTarget, s.ProteinTargetMg, s.SatFatTargetMg, s.WeightTargetG,
 		s.CardioWeeklyTarget, s.StrengthWeeklyTarget, s.YogaWeeklyTarget, s.MeditationWeeklyDays,
-		s.PTWeeklyDays)
+		s.PTWeeklyDays,
+		componentTargets, s.SupplyNudgeDOW, s.NudgeStartHour, s.NudgeEndHour, s.NudgesEnabled)
 	if err != nil {
 		return fmt.Errorf("update settings: %w", err)
 	}
@@ -797,4 +815,103 @@ func (d *DB) queryExercise(ctx context.Context, where string, args []any) ([]foo
 		sessions = append(sessions, e)
 	}
 	return sessions, rows.Err()
+}
+
+// ---- component tags (inclusion phase 1) ----
+
+// ListComponentTags returns every food -> component tag, newest updated
+// first.
+func (d *DB) ListComponentTags(ctx context.Context) ([]food.ComponentTag, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, normalized_name, fdc_id, component_id, grams_per_serving, tag_source, created_at, updated_at
+		FROM food_component_tags ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query component tags: %w", err)
+	}
+	defer rows.Close()
+
+	var out []food.ComponentTag
+	for rows.Next() {
+		var t food.ComponentTag
+		if err := rows.Scan(&t.ID, &t.NormalizedName, &t.FDCID, &t.ComponentID, &t.GramsPerServing,
+			&t.TagSource, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan component tag: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// LookupComponentTagsByName fetches one food's existing tags by normalized
+// name (inclusion phase 2: canonical_lookup hands these back to the model for
+// verbatim reuse). Empty, not an error, on no tags.
+func (d *DB) LookupComponentTagsByName(ctx context.Context, normalizedName string) ([]food.ComponentTag, error) {
+	rows, err := d.pool.Query(ctx, `
+		SELECT id, normalized_name, fdc_id, component_id, grams_per_serving, tag_source, created_at, updated_at
+		FROM food_component_tags WHERE normalized_name = $1`, normalizedName)
+	if err != nil {
+		return nil, fmt.Errorf("query component tags by name: %w", err)
+	}
+	defer rows.Close()
+
+	var out []food.ComponentTag
+	for rows.Next() {
+		var t food.ComponentTag
+		if err := rows.Scan(&t.ID, &t.NormalizedName, &t.FDCID, &t.ComponentID, &t.GramsPerServing,
+			&t.TagSource, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan component tag: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// UpsertComponentTag inserts or updates a single (normalized_name,
+// component_id) tag row from item-level accretion on save (inclusion phase
+// 2). The WHERE clause is the "never overwritten by an AI proposal"
+// invariant: an incoming "ai" row is dropped silently when an existing row is
+// already "user"-owned, while an incoming "user" row always wins (Jim's
+// correction propagates forward, same as canonical accretion).
+func (d *DB) UpsertComponentTag(ctx context.Context, t food.ComponentTag, source string) error {
+	_, err := d.pool.Exec(ctx, `
+		INSERT INTO food_component_tags (normalized_name, fdc_id, component_id, grams_per_serving, tag_source)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT (normalized_name, component_id) DO UPDATE
+		SET grams_per_serving = EXCLUDED.grams_per_serving,
+		    fdc_id = COALESCE(EXCLUDED.fdc_id, food_component_tags.fdc_id),
+		    tag_source = EXCLUDED.tag_source,
+		    updated_at = NOW()
+		WHERE food_component_tags.tag_source != 'user' OR EXCLUDED.tag_source = 'user'`,
+		t.NormalizedName, t.FDCID, t.ComponentID, t.GramsPerServing, source)
+	if err != nil {
+		return fmt.Errorf("upsert component tag: %w", err)
+	}
+	return nil
+}
+
+// SetComponentTags replaces the whole tag set for a normalized food name:
+// clears any existing rows, then inserts the given set, all in one
+// transaction. An empty tags slice clears the food's tags entirely.
+func (d *DB) SetComponentTags(ctx context.Context, normalizedName string, fdcID *int64, tags []food.ComponentTag, source string) error {
+	tx, err := d.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM food_component_tags WHERE normalized_name = $1`, normalizedName); err != nil {
+		return fmt.Errorf("clear component tags: %w", err)
+	}
+	for _, t := range tags {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO food_component_tags (normalized_name, fdc_id, component_id, grams_per_serving, tag_source)
+			VALUES ($1,$2,$3,$4,$5)`,
+			normalizedName, fdcID, t.ComponentID, t.GramsPerServing, source); err != nil {
+			return fmt.Errorf("insert component tag: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }

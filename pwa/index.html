@@ -84,10 +84,14 @@ button.btn.ghost { background: none; color: var(--muted); }
 .seg button:last-child { border-right: none; }
 .seg button.on { background: var(--primary); color: #fff; font-weight: 600; }
 label.f { display: block; font-size: .75rem; color: var(--muted); margin: 12px 0 4px; }
-input[type=text], input[type=number], input[type=date] {
+input[type=text], input[type=number], input[type=date], select {
   width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 9px;
   background: var(--bg); color: var(--text);
 }
+.hourrange { display: flex; align-items: center; gap: 8px; }
+.hourrange input { width: 70px; flex: none; }
+.checkline { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: .9rem; }
+.checkline input { width: auto; }
 .row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .row:last-child { border-bottom: none; }
 .row .grow { flex: 1; min-width: 0; }
@@ -160,6 +164,34 @@ input[type=text], input[type=number], input[type=date] {
 .wt-val .u { font-weight: 400; color: var(--muted); font-size: .72rem; }
 .ti-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); font-size: .72rem; color: var(--muted); }
 .ti-legend .lgi { display: inline-flex; align-items: center; gap: 4px; }
+/* food · inclusion card — a meter, not a grid: dot-row length = that
+   component's weekly target, so rows differ in length by design. Distinct
+   from .ti-* (Training's day grid) on purpose; see ARCHITECTURE.md § PWA. */
+.fc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.fc-head h3 { margin: 0; }
+.fc-score { border: none; background: none; font-family: inherit; font-weight: 600; font-size: .85rem; color: var(--muted); cursor: pointer; padding: 0; }
+.fc-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.fc-row.fc-done .fc-label { color: var(--muted); }
+.fc-label { flex: 1 1 auto; min-width: 0; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-dots { display: flex; gap: 3px; flex-shrink: 0; font-size: 11px; line-height: 1; }
+.fc-dot { color: var(--primary); }
+.fc-dot.fc-faded { opacity: .45; }
+.fc-dot.fc-open { color: var(--line); }
+.fc-check { color: var(--green); font-weight: 700; }
+.fc-num { flex-shrink: 0; width: 40px; font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.fc-empty { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.fc-link { color: var(--primary); text-decoration: underline; cursor: pointer; }
+/* food · nudges (inclusion phase 5) — a quiet line directly under the food
+   card, not a card of its own; dismissing is a small muted x, same visual
+   weight as the reject control in Tag foods. */
+.nudge { background: var(--chip); border-radius: 10px; padding: 8px 12px; margin-bottom: 9px; font-size: .82rem; color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nudge .lk { color: var(--muted); padding: 0 2px; font-size: .85rem; flex-shrink: 0; }
+/* food · inclusion weekly recap (Trends) — a table-ish retrospective, not a
+   meter: reuses .fc-row/.fc-label/.fc-num but drops .fc-dots on purpose, so
+   it doesn't read as a second copy of the Today card's shape. */
+.fw-week + .fw-week { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.fw-weekhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: .85rem; font-weight: 600; margin-bottom: 2px; }
+.fw-weekhead .muted { font-weight: 400; }
 .qlSub { margin-bottom: 10px; }
 input.qlCustom { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: 16px; }
 textarea.qlNote { width: 100%; min-height: 52px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); margin-top: 4px; font-size: 16px; font-family: inherit; resize: vertical; line-height: 1.35; }
@@ -198,6 +230,12 @@ input.gramsIn { width: 52px; padding: 6px 6px; border: 1px solid var(--line); bo
 .altlist { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; }
 .altopt { display: flex; align-items: center; gap: 7px; text-align: left; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: .8rem; color: var(--text); cursor: pointer; }
 .altopt:hover { border-color: var(--primary); }
+/* inclusion-component chip row (phase 2): proposed/confirmed tags on a food */
+.componentrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 2px; }
+.compchip { border: 1px solid var(--line); border-radius: 20px; padding: 2px 9px; font-size: .78rem; background: var(--bg); color: var(--text); cursor: pointer; }
+.compchip.on { background: var(--chip-on); color: #fff; border-color: var(--chip-on); }
+.compadd { border: 1px dashed var(--line); border-radius: 50%; width: 22px; height: 22px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; font-size: .85rem; color: var(--muted); cursor: pointer; background: none; flex-shrink: 0; }
+.compchips { flex-basis: 100%; margin-top: 2px; }
 /* meal photo in the detail dialog: cropped banner, tap to see the full shot */
 .dphoto { width: 100%; max-height: 180px; object-fit: cover; border-radius: 10px; margin: 8px 0 10px; cursor: pointer; display: block; }
 .dphoto.full { max-height: none; object-fit: contain; }
@@ -274,7 +312,7 @@ dialog.wide { width: min(520px, calc(100vw - 24px)); }
     <!-- knife -->
     <path d="M67 4c-3.1 3.3-3.1 8.2 0 11.4V24"/>
   </svg>
-  <span class="buildstamp">20260726.2</span>
+  <span class="buildstamp">20260726.6</span>
 </header>
 <main id="main"></main>
 <div id="bottomBar">
@@ -294,9 +332,10 @@ const S = {
   settings: null,
   health: { photos: false, ai: false },
   trendsRange: 'week',
-  trendRows: null, trendWeights: null, trendStart: null, trendEnd: null,
+  trendRows: null, trendWeights: null, trendStart: null, trendEnd: null, inclusionWeeks: null,
   exercise: null,
   trendsTab: 'food', trainingRange: '6wk', trainingData: null,
+  inclusion: null,
 };
 
 // ---------- api ----------
@@ -409,7 +448,7 @@ function goTab(view) {
   // the active tab -- otherwise there's no way back from a scrolled-back day
   // except tapping the day-nav arrows one at a time.
   if (view === 'today' && S.day !== today()) {
-    S.day = today(); S.summary = null; S.view = view; render();
+    S.day = today(); S.summary = null; S.inclusion = null; S.view = view; render();
     loadDay(S.day).then(render).catch(e => toast('Error: ' + e.message));
     return;
   }
@@ -442,7 +481,7 @@ window.addEventListener('resize', positionTodayLane);
 function changeDay(delta) {
   const d = addDays(S.day, delta);
   if (d > today()) return;
-  S.day = d; S.summary = null; render();
+  S.day = d; S.summary = null; S.inclusion = null; render();
   loadDay(d).then(render).catch(e => toast('Error: ' + e.message));
 }
 async function loadDay(d) { S.summary = await api('/day/' + d); }
@@ -647,6 +686,8 @@ function renderToday(m) {
     </div>
     ${anomalyLine(s)}
     ${trainingCardHTML()}
+    ${foodCardHTML()}
+    ${nudgeLineHTML()}
     ${hasAny
       ? order.map(([key, label]) => {
         const meal = (groups[key] || [])[0];
@@ -670,6 +711,107 @@ function renderToday(m) {
       : '<div class="empty">No food logged yet</div>'}
   `;
   if (!S.exercise) loadExercise().then(render).catch(e => toast('Error: ' + e.message));
+  if (!S.inclusion) loadInclusion().then(render).catch(e => toast('Error: ' + e.message));
+}
+
+// ==================== FOOD · INCLUSION ====================
+// Rolling-7-day meter card, sits below Training on Today. Deliberately NOT a
+// day grid (that's the Training card's job — see ARCHITECTURE.md § PWA): a
+// meter answers "how many", a grid answers "when", and stacking two grids
+// with different meanings for their columns is the one bad outcome here.
+// Fresh .fc-* classes throughout; .ti-* stays untouched.
+function fmtServingsX100(x100) {
+  const whole = Math.floor(x100 / 100);
+  const rem = x100 - whole * 100;
+  const tenths = Math.round(rem / 10);
+  if (tenths === 0) return String(whole);
+  if (tenths === 10) return String(whole + 1);
+  return whole + '.' + tenths;
+}
+function fcRowHTML(c) {
+  const target = c.target;
+  const filled = Math.min(c.whole, target);
+  // the last expiring_whole filled dots are the ones that age out at the
+  // start of tomorrow (spec: decay preview) — never more than are filled.
+  const fadedCount = Math.min(c.expiring_whole, filled);
+  let dots = '';
+  for (let i = 0; i < target; i++) {
+    if (i < filled) {
+      const faded = i >= filled - fadedCount;
+      dots += `<span class="fc-dot${faded ? ' fc-faded' : ''}">${faded ? '◐' : '●'}</span>`;
+    } else {
+      dots += `<span class="fc-dot fc-open">○</span>`;
+    }
+  }
+  // Numerator caps at target so an over-target count never renders as
+  // overflow -- the cap is the point of the score (spec §9).
+  const cappedX100 = Math.min(c.servings_x100, target * 100);
+  const num = fmtServingsX100(cappedX100) + '/' + target;
+  return `<div class="fc-row${c.met ? ' fc-done' : ''}">
+    <div class="fc-label">${c.emoji}&nbsp; ${esc(c.label)}</div>
+    <div class="fc-dots">${dots}</div>
+    <div class="fc-num">${num}${c.met ? ' <span class="fc-check">✓</span>' : ''}</div>
+  </div>`;
+}
+function showInclusionInfo() {
+  const w = S.inclusion;
+  if (!w) return;
+  openDialog(`<h2>Inclusion <span class="fc-score" style="position:static">${w.score}</span></h2>
+    <p class="s muted" style="margin:8px 0 12px"><strong>Composition</strong> (the badge up top) asks: <em>of the calories I ate, what tier were they?</em> <strong>Inclusion</strong> asks: <em>did I eat the foods with the strongest evidence behind them?</em> A calorie-weighted average can't register a cup of kale, so this counts servings instead.</p>
+    <div class="dlg-actions"><button class="btn" onclick="closeDialog()">Close</button></div>`);
+}
+function foodCardHTML() {
+  if (!S.inclusion) return `<div class="card"><h3>Food · last 7 days</h3><div class="muted sm">Loading…</div></div>`;
+  const w = S.inclusion;
+  const allZero = w.components.every(c => c.servings_x100 === 0);
+  return `<div class="card">
+    <div class="fc-head"><h3>Food · last 7 days</h3><button class="fc-score" onclick="showInclusionInfo()" title="How this score is computed">${w.score}</button></div>
+    ${w.components.map(fcRowHTML).join('')}
+    ${allZero ? `<div class="fc-empty muted sm">Tag foods as you log them to fill this in — <span class="fc-link" onclick="openTagFoods()">Settings → Tag foods</span></div>` : ''}
+  </div>`;
+}
+
+// ---------- Food · nudges (inclusion phase 5) ----------
+// In-app only: pwa/sw.js is cache-only, there's no VAPID keypair, subscription
+// table, or server-side scheduler, so these render on Today instead of
+// pushing. Everything here reads S.inclusion (an InclusionWindow) and
+// S.settings for timing/on-off -- NEVER S.summary, a day score, calories, or
+// macros. That's the honesty constraint (spec §7): a logged day with nothing
+// beneficial in it must cost exactly what an unlogged day costs, so nothing
+// here may penalize logging a low-quality item. Go has already ranked the
+// candidates (InclusionWindow.supply_needs / .decision_candidate, computed
+// from Components alone -- see internal/food/inclusion.go); this section only
+// decides whether to surface one, using the clock, the calendar, dismissal
+// state, and Settings.
+const NUDGE_COPY = {
+  supply: needs => `Next 7 days needs: ${needs.map(c => c.label.toLowerCase()).join(', ')}.`,
+  decision: c => `${c.label} would help this week.`,
+};
+function nudgeDismissedToday(key) { return localStorage.getItem(key) === today(); }
+function dismissSupplyNudge() { localStorage.setItem('food_nudge_supply_dismissed', today()); render(); }
+function dismissDecisionNudge() { localStorage.setItem('food_nudge_decision_dismissed', today()); render(); }
+function supplyNudgeLine(w, settings) {
+  if (!settings.nudges_enabled) return '';
+  if (new Date().getDay() !== settings.supply_nudge_dow) return '';
+  if (nudgeDismissedToday('food_nudge_supply_dismissed')) return '';
+  const needs = w.supply_needs || [];
+  if (!needs.length) return '';
+  return `<div class="nudge"><span>${esc(NUDGE_COPY.supply(needs))}</span><button class="lk" onclick="dismissSupplyNudge()" title="Dismiss for today">✕</button></div>`;
+}
+function decisionNudgeLine(w, settings) {
+  if (!settings.nudges_enabled) return '';
+  if (nudgeDismissedToday('food_nudge_decision_dismissed')) return '';
+  const hour = new Date().getHours();
+  if (hour < settings.nudge_start_hour || hour >= settings.nudge_end_hour) return '';
+  const c = w.decision_candidate;
+  if (!c) return '';
+  return `<div class="nudge"><span>${esc(NUDGE_COPY.decision(c))}</span><button class="lk" onclick="dismissDecisionNudge()" title="Dismiss for today">✕</button></div>`;
+}
+// nudgeLineHTML: at most one line, ever (tier 1 outranks tier 2 -- spec §7
+// "never fire [the decision nudge] when the supply nudge is showing").
+function nudgeLineHTML() {
+  if (!S.inclusion || !S.settings) return '';
+  return supplyNudgeLine(S.inclusion, S.settings) || decisionNudgeLine(S.inclusion, S.settings);
 }
 
 // ==================== TRAINING ====================
@@ -708,6 +850,7 @@ async function loadExercise() {
   S.exercise = { sessions, weights, start, end };
 }
 function invalidateExercise() { S.exercise = null; }
+async function loadInclusion() { S.inclusion = await api('/inclusion'); }
 function typeSessionsInWeek(sessions, type, weekStartStr) {
   const end = addDays(weekStartStr, 6);
   return sessions.filter(s => s.type === type && s.day >= weekStartStr && s.day <= end);
@@ -1373,6 +1516,76 @@ function qtyStepper(it, idx) {
     <button onclick="stepItemFraction(${idx},1)" ${cur >= QTY_MAX ? 'disabled' : ''} title="More">+</button>
   </div>`;
 }
+// Inclusion-component catalog (phase 2) — mirrors food.ComponentCatalog.
+// Fixed at five components by design (inclusion-spec-20260726.md §2), same
+// hardcode-in-JS convention as EX_FIELDS for the exercise chip configs.
+const COMPONENT_CATALOG = [
+  { id: 'leafy_greens', label: 'Leafy greens', emoji: '🥬', default_grams_per_serving: 30, default_target: 7 },
+  { id: 'berries', label: 'Berries', emoji: '🫐', default_grams_per_serving: 75, default_target: 5 },
+  { id: 'legumes', label: 'Legumes', emoji: '🫘', default_grams_per_serving: 90, default_target: 5 },
+  { id: 'fatty_fish', label: 'Fatty fish', emoji: '🐟', default_grams_per_serving: 100, default_target: 3 },
+  { id: 'cruciferous', label: 'Cruciferous', emoji: '🥦', default_grams_per_serving: 85, default_target: 4 },
+];
+// effectiveTarget: a Settings.component_targets override wins over the
+// catalog default -- targets are the only inclusion tuning knob (spec §3).
+function effectiveTarget(def, settings) {
+  const override = settings && settings.component_targets && settings.component_targets[def.id];
+  return override > 0 ? override : def.default_target;
+}
+function fmtServings(x100) {
+  const v = x100 / 100;
+  return (Number.isInteger(v) ? v : v.toFixed(1)) + ' svg';
+}
+// componentRow (item 5 / inclusion phase 2): proposed or confirmed inclusion
+// tags for a food, as chips, with a + to open the five-way picker. The
+// serving figure is computed live from current grams × fraction so editing
+// portion updates it immediately, without a re-parse. Shared by the draft
+// card and the edit-food sheet since both render through draftItemRow.
+function componentRow(it, idx) {
+  const comps = it.components || [];
+  const eatenG = Math.round((it.grams || 0) * it.fraction_pct / 100);
+  const chips = comps.map(c => {
+    const def = COMPONENT_CATALOG.find(d => d.id === c.component_id);
+    if (!def) return '';
+    const svgX100 = c.grams_per_serving > 0 ? Math.round(eatenG * 100 / c.grams_per_serving) : 0;
+    return `<button class="compchip on" onclick="openComponentGrams(${idx},'${c.component_id}')" title="Tap to edit grams per serving">${def.emoji} ${esc(def.label)} · ${fmtServings(svgX100)}</button>`;
+  }).join('');
+  const addBtn = `<button class="compadd" onclick="toggleComponentPicker(${idx})" title="Tag inclusion component">+</button>`;
+  const picker = it._showComponentPicker ? `<div class="chips compchips">${COMPONENT_CATALOG.map(def => {
+    const on = comps.some(c => c.component_id === def.id);
+    return `<button class="${on ? 'on' : ''}" onclick="toggleItemComponent(${idx},'${def.id}')">${def.emoji} ${esc(def.label)}</button>`;
+  }).join('')}</div>` : '';
+  return `<div class="componentrow">${chips}${addBtn}${picker}</div>`;
+}
+function toggleComponentPicker(idx) { DRAFT.items[idx]._showComponentPicker = !DRAFT.items[idx]._showComponentPicker; renderDraftDialog(); }
+// toggleItemComponent adds/removes a component tag from the picker. Any touch
+// marks the tag 'user'-sourced, so the save writes tag_source: user and a
+// later AI proposal for this food never overwrites Jim's call.
+function toggleItemComponent(idx, compId) {
+  const it = DRAFT.items[idx];
+  it.components = it.components || [];
+  const i = it.components.findIndex(c => c.component_id === compId);
+  if (i >= 0) {
+    it.components.splice(i, 1);
+  } else {
+    const def = COMPONENT_CATALOG.find(d => d.id === compId);
+    it.components.push({ component_id: compId, grams_per_serving: def.default_grams_per_serving, source: 'user' });
+  }
+  renderDraftDialog();
+}
+function openComponentGrams(idx, compId) {
+  const it = DRAFT.items[idx];
+  const c = (it.components || []).find(x => x.component_id === compId);
+  if (!c) return;
+  const def = COMPONENT_CATALOG.find(d => d.id === compId);
+  const val = prompt(`Grams of ${it.name} that make one ${def ? def.label.toLowerCase() : compId} serving:`, c.grams_per_serving);
+  if (val === null) return;
+  const g = parseInt(val, 10);
+  if (!g || g <= 0) return;
+  c.grams_per_serving = Math.min(2000, Math.max(1, g));
+  c.source = 'user';
+  renderDraftDialog();
+}
 function draftItemRow(it, idx) {
   const eaten = k => Math.round(it[k] * it.fraction_pct / 100 / 1000);
   const eatenCal = Math.round(it.calories * it.fraction_pct / 100);
@@ -1390,6 +1603,7 @@ function draftItemRow(it, idx) {
       <span class="s">${eatenCal} cal · ${macro(eaten('protein_mg'), 'protein', 'P')} · ${macro(eaten('carbs_mg'), 'carbs', 'C')} · ${macro(eaten('fat_mg'), 'fat', 'F')} · ${eaten('sat_fat_mg')}g sat fat</span>
     </div>
     ${matchRow(it, idx)}
+    ${componentRow(it, idx)}
     ${qtyStepper(it, idx)}
   </div>`;
 }
@@ -1452,7 +1666,7 @@ function swapMatch(idx, altIdx) {
 }
 // cleanItem strips row identity and the draft-only confirm-the-match fields
 // before an item is snapshotted into a favorite or re-logged.
-function cleanItem({ id, meal_id, match_description, alternatives, alternative_fdc_ids, _showAlts, ...rest }) { return rest; }
+function cleanItem({ id, meal_id, match_description, alternatives, alternative_fdc_ids, _showAlts, _showComponentPicker, ...rest }) { return rest; }
 function stepItemFraction(idx, dir) { const it = DRAFT.items[idx]; it.fraction_pct = nextStop(it.fraction_pct, dir); renderDraftDialog(); }
 function removeDraftItem(idx) { DRAFT.items.splice(idx, 1); DRAFT.items.forEach((it, i) => it.position = i); renderDraftDialog(); }
 function setDraftGrams(idx, val) {
@@ -1569,7 +1783,7 @@ async function saveDraft() {
       await api('/foods', { method: 'POST', body: { day, slot, items } });
     }
     closeDialog(); toast('Saved'); DRAFT = null;
-    S.trendRows = null;
+    S.trendRows = null; S.inclusion = null; S.inclusionWeeks = null;
     S.day = day; // follow the food if it was filed to another day
     await loadDay(S.day); render();
   } catch (e) { toast('Error: ' + e.message); }
@@ -1579,7 +1793,7 @@ async function deleteFood(id) {
   try {
     await api('/foods/' + id, { method: 'DELETE' });
     closeDialog(); toast('Deleted'); DRAFT = null;
-    S.trendRows = null;
+    S.trendRows = null; S.inclusion = null; S.inclusionWeeks = null;
     await loadDay(S.day); render();
   } catch (e) { toast('Error: ' + e.message); }
 }
@@ -1587,7 +1801,7 @@ function clearMealConfirm(id) { if (confirm('Clear this whole meal?')) clearMeal
 async function clearMeal(id) {
   try {
     await api('/meals/' + id, { method: 'DELETE' });
-    toast('Cleared'); S.trendRows = null;
+    toast('Cleared'); S.trendRows = null; S.inclusion = null; S.inclusionWeeks = null;
     await loadDay(S.day); render();
   } catch (e) { toast('Error: ' + e.message); }
 }
@@ -1602,13 +1816,19 @@ async function loadTrends() {
   const end = today();
   const days = S.trendsRange === 'week' ? 7 : 30;
   const start = addDays(end, -(days - 1));
-  const [rows, weights] = await Promise.all([
+  // Inclusion weeks (spec §8): fetched over a wider back-range than the food
+  // range above, independent of it, since it only surfaces completed Mon-Sun
+  // weeks -- the render side slices to the count the range control implies.
+  const weeksStart = addDays(end, S.trendsRange === 'week' ? -14 : -42);
+  const [rows, weights, weeks] = await Promise.all([
     api(`/range?start=${start}&end=${end}`),
     api(`/weights?start=${start}&end=${end}`),
+    api(`/inclusion/weeks?start=${weeksStart}&end=${end}`),
   ]);
   S.trendRows = rows; S.trendWeights = weights; S.trendStart = start; S.trendEnd = end;
+  S.inclusionWeeks = weeks;
 }
-function setTrendsRange(r) { S.trendsRange = r; S.trendRows = null; render(); }
+function setTrendsRange(r) { S.trendsRange = r; S.trendRows = null; S.inclusionWeeks = null; render(); }
 function jumpToDay(day) { S.day = day; goTab('today'); loadDay(day).then(render).catch(e => toast('Error: ' + e.message)); }
 
 // barValueLabel puts a small value above a bar. Wide bars (week view) get a
@@ -1890,6 +2110,34 @@ function renderTrainingTrends(m) {
     ${trainingTableHTML(weeks, aggs, curWs)}
   `;
 }
+// inclusionWeekHTML / inclusionWeeksCardHTML (inclusion phase 4 §8): the
+// weekly retrospective card at the bottom of Trends -> Food. Calendar weeks
+// (Mon-Sun) apply to food only here -- Today's card stays rolling. Reuses
+// .fc-row/.fc-label/.fc-num/.fc-check from the Today card but drops
+// .fc-dots: this reads as a table-ish recap, not a second meter.
+function inclusionWeekHTML(week) {
+  const total = week.components.length;
+  const rows = week.components.map(c => {
+    const num = fmtServingsX100(Math.min(c.servings_x100, c.target * 100)) + '/' + c.target;
+    return `<div class="fc-row${c.met ? ' fc-done' : ''}">
+      <div class="fc-label">${c.emoji}&nbsp; ${esc(c.label)}</div>
+      <div class="fc-num">${num}${c.met ? ' <span class="fc-check">✓</span>' : ''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="fw-week">
+    <div class="fw-weekhead"><span>Week of ${weekLabel(week.week_start)}</span><span class="muted">${week.components_hit}/${total} components</span></div>
+    ${rows}
+  </div>`;
+}
+function inclusionWeeksCardHTML() {
+  if (!S.inclusionWeeks) return '';
+  const weeks = S.inclusionWeeks.slice(0, S.trendsRange === 'week' ? 1 : 5);
+  const hasData = weeks.some(w => w.components.some(c => c.servings_x100 > 0));
+  return `<div class="card">
+    <h3>Inclusion · weekly recap</h3>
+    ${weeks.length && hasData ? weeks.map(inclusionWeekHTML).join('') : `<div class="muted sm">No completed weeks with tagged food yet</div>`}
+  </div>`;
+}
 function renderTrends(m) {
   if (S.trendsTab === 'training') { renderTrainingTrends(m); return; }
   if (!S.trendRows) {
@@ -1937,6 +2185,7 @@ function renderTrends(m) {
       <h3>Weight</h3>
       ${weightChart(S.trendWeights, S.settings?.weight_target_g)}
     </div>
+    ${inclusionWeeksCardHTML()}
   `;
 }
 
@@ -1971,6 +2220,29 @@ function renderSettings(m) {
       <div class="dlg-actions"><button class="btn primary" onclick="saveSettings()">Save</button></div>
     </div>
     <div class="card">
+      <h2>Inclusion score</h2>
+      <p class="muted sm" style="margin:2px 0 10px">Backfill component tags on foods you've already logged — the rolling-7-day card reads from this table.</p>
+      <button class="btn" onclick="openTagFoods()">Tag foods…</button>
+    </div>
+    <div class="card">
+      <h2>Inclusion targets & nudges</h2>
+      ${COMPONENT_CATALOG.map(def => `
+      <label class="f">${def.emoji} ${esc(def.label)} target / week</label>
+      <input type="number" id="setTarget_${def.id}" min="1" max="21" value="${effectiveTarget(def, s)}">`).join('')}
+      <label class="f">Supply nudge day</label>
+      <select id="setSupplyDow">
+        ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => `<option value="${i}" ${(s.supply_nudge_dow ?? 6) === i ? 'selected' : ''}>${d}</option>`).join('')}
+      </select>
+      <label class="f">Decision nudge window (device-local hours)</label>
+      <div class="hourrange">
+        <input type="number" id="setNudgeStart" min="0" max="23" value="${s.nudge_start_hour ?? 11}">
+        <span class="muted sm">to</span>
+        <input type="number" id="setNudgeEnd" min="0" max="23" value="${s.nudge_end_hour ?? 13}">
+      </div>
+      <label class="checkline"><input type="checkbox" id="setNudgesEnabled" ${s.nudges_enabled !== false ? 'checked' : ''}> Nudges on</label>
+      <div class="dlg-actions"><button class="btn primary" onclick="saveSettings()">Save</button></div>
+    </div>
+    <div class="card">
       <h2>Data</h2>
       <p class="muted sm" style="margin:2px 0 10px">Download your log to analyze in a Claude chat — a JSON file plus a daily CSV, in units ready to paste in. Or grab a full backup.</p>
       <button class="btn" onclick="openAnalysisExport()">Export for analysis…</button>
@@ -1996,13 +2268,118 @@ async function saveSettings() {
     yoga_weekly_target: parseInt($('#setYoga').value, 10) || 0,
     meditation_weekly_days: parseInt($('#setMedDays').value, 10) || 0,
     pt_weekly_days: parseInt($('#setPTDays').value, 10) || 0,
+    component_targets: Object.fromEntries(COMPONENT_CATALOG.map(def => [def.id, parseInt($('#setTarget_' + def.id).value, 10) || def.default_target])),
+    supply_nudge_dow: parseInt($('#setSupplyDow').value, 10),
+    nudge_start_hour: parseInt($('#setNudgeStart').value, 10) || 0,
+    nudge_end_hour: parseInt($('#setNudgeEnd').value, 10) || 0,
+    nudges_enabled: $('#setNudgesEnabled').checked,
   };
   try {
     S.settings = await api('/settings', { method: 'PUT', body });
-    S.trendRows = null;
+    S.trendRows = null; S.inclusion = null; S.inclusionWeeks = null;
     await loadDay(S.day); // the day summary embeds the targets -- refresh so the ring updates now
     toast('Saved'); render();
   } catch (e) { toast('Error: ' + e.message); }
+}
+// ---------- Tag foods (inclusion phase 2 §4: Settings backfill screen) ----------
+let TAGFOODS = null;
+function normName(s) { return (s || '').toLowerCase().trim().replace(/\s+/g, ' '); }
+function openTagFoods() {
+  TAGFOODS = { candidates: null, suggesting: false, suggested: {} };
+  renderTagFoods();
+  loadTagCandidates();
+}
+async function loadTagCandidates() {
+  try {
+    TAGFOODS.candidates = await api('/component-tags/candidates');
+    renderTagFoods();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+function renderTagFoods() {
+  if (!TAGFOODS) return;
+  const list = TAGFOODS.candidates;
+  const tagged = list ? list.filter(c => (c.tags || []).length).length : 0;
+  const total = list ? list.length : 0;
+  const rows = !list
+    ? '<div class="empty">Loading…</div>'
+    : (list.length ? `<div class="itemlist">${list.map(tagFoodRow).join('')}</div>` : '<div class="empty">No logged foods yet</div>');
+  openDialog(`<h2>Tag foods</h2>
+    <p class="muted sm" style="margin:2px 0 10px">${list ? `${tagged} of ${total} foods tagged` : 'Loading…'}</p>
+    <button class="btn" ${TAGFOODS.suggesting || !list || !list.length ? 'disabled' : ''} onclick="suggestTagsForUntagged()">${TAGFOODS.suggesting ? 'Suggesting…' : 'Suggest tags'}</button>
+    ${rows}
+    <div class="dlg-actions"><button class="btn ghost" onclick="closeDialog()">Close</button></div>`);
+  $('#dlg').classList.add('wide');
+}
+function tagFoodRow(c) {
+  const active = c.tags || [];
+  const chips = COMPONENT_CATALOG.map(def => {
+    const on = active.some(t => t.component_id === def.id);
+    return `<button class="compchip ${on ? 'on' : ''}" onclick="toggleCandidateTag('${c.normalized_name}','${def.id}')">${def.emoji} ${esc(def.label)}</button>`;
+  }).join('');
+  const suggested = TAGFOODS.suggested[c.normalized_name] || [];
+  const suggestedChips = suggested.length ? `<div class="componentrow">${suggested.map(s => {
+    const def = COMPONENT_CATALOG.find(d => d.id === s.component_id);
+    if (!def) return '';
+    return `<button class="compchip" style="border-style:dashed" onclick="acceptSuggestedTag('${c.normalized_name}','${s.component_id}',${s.grams_per_serving})" title="Unconfirmed — tap to accept">${def.emoji} ${esc(def.label)} ?</button>
+      <button class="lk" style="color:var(--muted)" onclick="rejectSuggestedTag('${c.normalized_name}','${s.component_id}')" title="Reject">✕</button>`;
+  }).join('')}</div>` : '';
+  return `<div class="itemrow">
+    <div class="irow-top"><div class="grow"><div class="m">${esc(c.display_name)}</div><div class="s">${c.times_logged}× logged</div></div></div>
+    <div class="componentrow">${chips}</div>
+    ${suggestedChips}
+  </div>`;
+}
+async function toggleCandidateTag(normalizedName, compId) {
+  const c = TAGFOODS.candidates.find(x => x.normalized_name === normalizedName);
+  if (!c) return;
+  const tags = c.tags || [];
+  const i = tags.findIndex(t => t.component_id === compId);
+  let newTags;
+  if (i >= 0) {
+    newTags = tags.filter((_, idx) => idx !== i);
+  } else {
+    const def = COMPONENT_CATALOG.find(d => d.id === compId);
+    newTags = [...tags, { component_id: compId, grams_per_serving: def.default_grams_per_serving }];
+  }
+  try {
+    await api('/component-tags', { method: 'PUT', body: { normalized_name: normalizedName, fdc_id: c.fdc_id || null, tags: newTags } });
+    c.tags = newTags;
+    renderTagFoods();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+async function acceptSuggestedTag(normalizedName, compId, gramsPerServing) {
+  const c = TAGFOODS.candidates.find(x => x.normalized_name === normalizedName);
+  if (!c) return;
+  const tags = (c.tags || []).filter(t => t.component_id !== compId).concat([{ component_id: compId, grams_per_serving: gramsPerServing }]);
+  try {
+    await api('/component-tags', { method: 'PUT', body: { normalized_name: normalizedName, fdc_id: c.fdc_id || null, tags } });
+    c.tags = tags;
+    rejectSuggestedTag(normalizedName, compId); // clears the now-accepted suggestion chip
+  } catch (e) { toast('Error: ' + e.message); }
+}
+function rejectSuggestedTag(normalizedName, compId) {
+  const remaining = (TAGFOODS.suggested[normalizedName] || []).filter(s => s.component_id !== compId);
+  if (remaining.length) TAGFOODS.suggested[normalizedName] = remaining;
+  else delete TAGFOODS.suggested[normalizedName];
+  renderTagFoods();
+}
+// suggestTagsForUntagged posts every untagged name in one batch call; nothing
+// persists until Jim accepts a chip (AI-never-writes holds here too).
+async function suggestTagsForUntagged() {
+  if (!TAGFOODS.candidates) return;
+  const untagged = TAGFOODS.candidates.filter(c => !(c.tags || []).length);
+  if (!untagged.length) { toast('Everything is tagged'); return; }
+  TAGFOODS.suggesting = true; renderTagFoods();
+  try {
+    const names = untagged.slice(0, 40).map(c => c.display_name);
+    const results = await api('/component-tags/suggest', { method: 'POST', body: { names } });
+    for (const r of (results || [])) {
+      if (!r.components || !r.components.length) continue;
+      const c = TAGFOODS.candidates.find(x => x.normalized_name === normName(r.name));
+      if (c) TAGFOODS.suggested[c.normalized_name] = r.components;
+    }
+  } catch (e) { toast('Error: ' + e.message); }
+  TAGFOODS.suggesting = false; renderTagFoods();
 }
 async function downloadExport() {
   try {
